@@ -203,6 +203,32 @@ docker compose version
 
 注意：Langfuse 映射到宿主 3001；Grafana 映射到宿主 3000，二者可同时运行。
 
+### 目录速查
+
+（2026-11-06 从 README 移来。）
+
+```
+backend/                 Maven 多模块（Java 21）
+  gateway/               8080  路由、JWT 门禁、CORS
+  auth-service/          8081  登录 / 刷新 / 登出
+  user-service/          8082  用户管理
+  teacher-service/       8083  教师档案
+  student-service/       8084  学生档案、成绩、考勤
+  mental-service/        8085  问卷与心理评估
+  data-service/          8086  看板统计
+  agent-service/         8087  风险任务、AgentLoop、审核编排、导出、SSE
+  mcp-student-data/      8094  学生数据 MCP server
+  common/                      Result、JWT、AccessGuard、字段权限、Prompt 清洗
+ai-inference-service/    Python FastAPI：legacy risk/plan/audit、dense RAG、knowledge-rag MCP（:8095）
+frontend/                Vue 3 · Vite · Element Plus · Pinia · ECharts
+docker/                  开发 / 生产 / 监控 compose、各服务 Dockerfile、nginx、Prometheus/Grafana
+sql/                     初始化与生产改密脚本
+eval/                    风险识别离线评测（CI eval-gate）
+scripts/                 冒烟、压测、备份、模型服务启动脚本
+docs/                    部署、EduCare 设计与验收文档
+render.yaml              Render Blueprint（云端演示部署）
+```
+
 ## 3. 首次准备
 
 ### 3.1 获取依赖并验证构建
@@ -225,6 +251,22 @@ pip install -r requirements.txt
 MySQL 容器首次创建数据卷时会按文件名顺序执行 `sql/init/`。后续修改初始化 SQL 不会自动重放；需要对现有库显式执行新增迁移，或在确认可丢弃本地数据后重建卷。
 
 默认开发账号为 `admin/admin`、`teacher/teacher`、`student/student`。这些账号只用于本地；生产必须执行 `sql/prod/01_rotate_default_passwords.sql`。
+
+### 3.3 常用配置
+
+（2026-11-06 从 README 移来。）
+
+| 变量 | 作用 |
+|---|---|
+| `NACOS_SERVER` / `NACOS_USERNAME` / `NACOS_PASSWORD` | Nacos 连接 |
+| `MYSQL_HOST` / `MYSQL_USER` / `MYSQL_PASSWORD` | 数据库 |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | Redis |
+| `JWT_SECRET` | JWT 签名密钥（≥ 32 字节，放 Nacos `common.yml` 或 `.env`，勿提交） |
+| `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | OpenAI 兼容 LLM 端点 |
+| `EMBEDDING_BASE_URL` / `RERANKER_BASE_URL` | 向量化 / 重排 |
+| `MILVUS_HOST` / `MILVUS_PORT` | Milvus |
+| `EDUCARE_AGENT_LOOP_ENABLED` | AgentLoop 主路径开关（默认开） |
+| `educare.field-permission.enabled` | 字段级权限（默认开） |
 
 ## 4. 启动开发环境
 
@@ -950,6 +992,7 @@ GATEWAY=https://<domain>/api ADMIN_USER=admin ADMIN_PASS='<password>' bash scrip
 
 | 日期/标识 | 变更 | 验证状态 |
 |---|---|---|
+| 2026-11-06 / README-SLIM-20261106 | README 改为项目首页；目录速查移到 §2、常用配置移到 §3.3，内容未改 | 只改文档；README 链接与徽章对应的 workflow 文件已静态核对，未运行服务与测试 |
 | 2026-10-06 / K3S-HPA-DEPLOY-20261006 | K3s/Secret/PVC、分阶段业务与data HPA | Node/metrics、12私有服务、11镜像、默认改密/三角色鉴权20项、MySQL隔离还原20表通过；HPA1→2已验，自动回缩1已验；完整AI/TLS待模型配置 |
 | 2026-10-06 / KAMATERA-DEPLOY-20261006 | Kamatera 注册、押金/控制台报价核对、SSH/部署入口、Rocky SELinux 适配及知识导入 404 排错 | 押金到账、US$92 配置、源码包独立构建/一致性、Python 32 项和工具 14 项通过；服务器创建/SSH/Rocky/Docker主机验证通过；真实Pod/模型运行待验证 |
 | 2026-09-01 / DOC-BASELINE | 按当前脚本、CI、compose 和执行计划初始化启动/测试/排错/发布手册 | 文档链接与命令静态核对；未执行真实服务和生产发布 |

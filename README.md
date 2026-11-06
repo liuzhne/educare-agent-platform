@@ -1,135 +1,65 @@
-# Resource-Profile · 师生资源画像系统
+<div align="center">
 
-面向学校的师生资源画像与教育风险干预平台：管理教师 / 学生档案、心理问卷与测评、数据看板，并内置 **EduCare AI 子系统**——以 **AgentLoop（ReAct）+ MCP 工具 + Dense RAG + OpenAI 兼容 LLM** 生成学生风险画像与干预方案，中高风险经合规审核后才会放行。
+# EduCare Agent Platform
 
-技术栈：Vue 3 · Spring Boot 3.2.5 / Spring Cloud 2023 / Spring AI 1.1.6 · Python FastAPI · Milvus · MySQL / Redis / Nacos。
+**学生风险预警 Agent：读学生数据、查政策与案例、写干预方案；中高风险必须过合规审核才放行。**
 
-> 项目级现状以根目录 [`ARCHITECTURE.md`](ARCHITECTURE.md)（架构）、[`DECISIONS.md`](DECISIONS.md)（决策）、[`RUNBOOK.md`](RUNBOOK.md)（运行手册）为准；EduCare 任务进度见 [`docs/educare/EXECUTION_PLAN.md`](docs/educare/EXECUTION_PLAN.md)。
+[![backend-ci](https://github.com/liuzhne/educare-agent-platform/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/liuzhne/educare-agent-platform/actions/workflows/backend-ci.yml)
+[![frontend-ci](https://github.com/liuzhne/educare-agent-platform/actions/workflows/frontend-ci.yml/badge.svg)](https://github.com/liuzhne/educare-agent-platform/actions/workflows/frontend-ci.yml)
+[![eval-gate](https://github.com/liuzhne/educare-agent-platform/actions/workflows/eval-gate.yml/badge.svg)](https://github.com/liuzhne/educare-agent-platform/actions/workflows/eval-gate.yml)
+<!-- 补上 LICENSE 文件后再加 license 徽章 -->
 
----
+[快速开始](#快速开始) · [工作原理](#工作原理) · [文档](#文档)
+<!-- 演示站确认可用时再放：· [在线演示](https://edu-portrait-frontend.onrender.com/) -->
 
-## 功能概览
+</div>
 
-| 模块 | 说明 |
-|---|---|
-| 登录鉴权 | JWT（access 24h / refresh 7d）+ Redis 会话白名单，登出 / 改密即时吊销；角色 admin / teacher / student |
-| 系统管理 | 用户、角色管理 |
-| 教师 / 学生画像 | 档案、成绩、考勤 |
-| 心理健康 | 问卷设计、发放、作答、结果分析；学生端测评与历史 |
-| 数据看板 | 统计聚合 + ECharts 可视化 |
-| EduCare 智能预警 | 风险任务触发、AgentLoop 画像、干预方案、合规审核、报告导出、干预反馈闭环、SSE 实时预警 |
+<!-- 这里放一张“风险画像 + 干预方案”页面截图或 GIF -->
 
-安全基线：网关统一 JWT 门禁（`/_internal/**` 一律 403）、下游服务入口 JWT/内部凭证门（`ServiceAuthFilter` + `X-Internal-Token`，防直连绕过网关）、`AccessGuard` 防越权（IDOR）、`@SensitiveField` 字段级权限默认开启、送模前 Prompt 清洗与脱敏。
+老师发现一个学生成绩下滑、缺勤变多时，需要的不是一个分数，而是一份说得清依据的风险判断和可执行的干预建议。EduCare 用一个 ReAct Agent 把学生档案、心理测评和学校知识库串起来，生成这份报告，并在高风险结论落地前强制加一道审核。
 
-## 架构
+- **Agent，而不是流水线**：AgentLoop 最多 8 轮 ReAct，按需调用 7 个 MCP 工具（4 个只读学生数据工具、3 个知识检索工具）。
+- **有出处的建议**：政策、案例与心理学资料走 Milvus 向量检索 + 重排。
+- **合规闸门**：MEDIUM / HIGH 结论必须经审核服务放行，审核出错不会静默通过。
+- **默认安全**：网关 JWT、服务间内部凭证、越权（IDOR）守卫、字段级权限、送模前脱敏。
+- **用评测守住质量**：50 例标注集离线评测；配置模型端点后，CI 的 eval-gate 要求风险等级一致率不低于 0.85。
+- **完整业务底座**：师生档案、成绩考勤、心理问卷、数据看板，开箱可用。
 
-```
-浏览器 ─► frontend (Vue 3) ─/api─► gateway :8080 ── JWT + Redis 会话校验
-                                      │
-        ┌──────────────┬──────────────┼───────────────────────────────┐
-        ▼              ▼              ▼                               ▼
-   auth :8081   user/teacher/student/mental/data :8082-8086   agent-service :8087
-                                                                      │
-             ┌────────────────────────┬───────────────────────────────┼──────────────┐
-             ▼ MCP                    ▼ MCP                           ▼ ChatClient   ▼ Feign（审核 / legacy）
-   student-data MCP :8094    knowledge-rag MCP :8095             LLM :8091     ai-inference-service :8090
-   （4 个只读学生数据工具）  （3 个知识检索工具）                                 （risk / plan / audit / rag）
-                                      │
-                    Embedding :8092 · Reranker :8093 · Milvus :19530
-```
+## 快速开始
 
-EduCare 默认链路（`educare.agent.loop.enabled=true`）：
-
-1. `POST /agent/api/v1/task/trigger/{studentId}` 创建任务（Sentinel 限流 + Redis 幂等 / 任务锁）。
-2. AgentLoop 最多 8 轮 ReAct，按需调用 7 个 MCP 工具：`get_student_profile`、`get_academic_history`、`get_mental_indicators`、`get_attendance`、`search_cases`、`search_policies`、`search_psychology`。
-3. 最终答案经 `FinalAnswerValidator` 校验，产出 `risk_analysis` + `intervention_plan`。
-4. NONE / LOW 直接完成；MEDIUM / HIGH 必须经 Python `/api/v1/agent/audit` 合规审核，结果为 `COMPLETED` 或 `REJECTED`，审核异常不静默放行。
-
-关闭 AgentLoop 时回落 legacy 流水线（聚合画像 → 风险 → RAG → 方案 → 审核）。详见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
-
-## 目录结构
-
-```
-backend/                 Maven 多模块（Java 21）
-  gateway/               8080  路由、JWT 门禁、CORS
-  auth-service/          8081  登录 / 刷新 / 登出
-  user-service/          8082  用户管理
-  teacher-service/       8083  教师档案
-  student-service/       8084  学生档案、成绩、考勤
-  mental-service/        8085  问卷与心理评估
-  data-service/          8086  看板统计
-  agent-service/         8087  风险任务、AgentLoop、审核编排、导出、SSE
-  mcp-student-data/      8094  学生数据 MCP server
-  common/                      Result、JWT、AccessGuard、字段权限、Prompt 清洗
-ai-inference-service/    Python FastAPI：legacy risk/plan/audit、dense RAG、knowledge-rag MCP（:8095）
-frontend/                Vue 3 · Vite · Element Plus · Pinia · ECharts
-docker/                  开发 / 生产 / 监控 compose、各服务 Dockerfile、nginx、Prometheus/Grafana
-sql/                     初始化与生产改密脚本
-eval/                    风险识别离线评测（CI eval-gate）
-scripts/                 冒烟、压测、备份、模型服务启动脚本
-docs/                    部署、EduCare 设计与验收文档
-render.yaml              Render Blueprint（云端演示部署）
-```
-
-## 快速开始（本地开发）
-
-**前置：** JDK 21 · Maven 3.8+ · Node.js 18+ · Docker（compose v2）· Python 3.10+。本地模型建议 Apple Silicon、内存 ≥ 24GB。
+需要 JDK 21、Maven、Node.js 18+、Docker、Python 3.10+。
 
 ```bash
-# 1. 基础设施 + Python 推理服务
 docker compose -f docker/docker-compose.yml up -d mysql redis nacos milvus-standalone etcd minio ai-inference-service
-
-# 2. 后端构建（再按 RUNBOOK §4.4 顺序逐个 spring-boot:run，agent-service 最后启动）
-cd backend && mvn clean install -DskipTests
-
-# 3. 前端
-cd frontend && npm install && npm run dev   # http://localhost:5173
+cd backend && mvn clean install -DskipTests     # 再按 RUNBOOK §4.4 依次启动各服务
+cd frontend && npm install && npm run dev        # http://localhost:5173
 ```
 
-默认账号 `admin` / `teacher` / `student`，密码与用户名相同（生产环境务必用 `sql/prod/` 脚本改密）。
+默认账号 `admin` / `teacher` / `student`，密码同用户名（生产务必改密）。AI 功能需要一个 OpenAI 兼容的模型端点，配置与知识库初始化见 [RUNBOOK](RUNBOOK.md)。
 
-启用 EduCare AI 还需要在宿主机提供 OpenAI 兼容的 LLM（:8091）、Embedding（:8092）、Reranker（:8093），并初始化 Milvus 知识库：
+## 工作原理
 
-```bash
-docker compose -f docker/docker-compose.yml exec ai-inference-service python -m scripts.init_milvus
-docker compose -f docker/docker-compose.yml exec ai-inference-service python -m scripts.seed_knowledge
+```text
+触发任务 ─► AgentLoop（ReAct，≤8 轮）
+              ├─ MCP 学生数据：档案 · 成绩 · 心理指标 · 考勤
+              └─ MCP 知识检索：案例 · 政策 · 心理学（Milvus + Reranker）
+                        ▼
+            风险画像 + 干预方案（结构校验）
+                        ▼
+      NONE / LOW 直接完成 · MEDIUM / HIGH ─► 合规审核 ─► 放行 / 驳回
 ```
 
-完整启动顺序、健康检查、验收与排错见 [`RUNBOOK.md`](RUNBOOK.md)。
+技术栈：Vue 3 · Spring Boot 3 / Spring Cloud / Spring AI · FastAPI · Milvus · MySQL · Redis · Nacos。
 
-## 部署
+## 文档
 
-| 场景 | 入口 |
+| | |
 |---|---|
-| 生产（自建服务器） | `docker/docker-compose.prod.yml` + nginx TLS，见 [`docs/DEPLOY.md`](docs/DEPLOY.md) |
-| 监控 | `docker/docker-compose.monitoring.yml`（Prometheus + Grafana） |
-| 云端演示 | [`render.yaml`](render.yaml)：Render + Aiven MySQL + GroqCloud LLM，见 `RUNBOOK.md` 的 RENDER / GROQ 章节 |
-
-## 测试
-
-```bash
-cd backend && mvn clean install                      # Java 单测（JUnit 5 + Mockito）
-cd ai-inference-service && python3 -m unittest discover -s tests   # Python 单测
-python3 eval/run_eval.py --validate-only             # 评测数据集体检
-```
-
-CI：`.github/workflows/` 下的 backend-ci、frontend-ci 与 eval-gate。
-
-## 常用配置
-
-| 变量 | 作用 |
-|---|---|
-| `NACOS_SERVER` / `NACOS_USERNAME` / `NACOS_PASSWORD` | Nacos 连接 |
-| `MYSQL_HOST` / `MYSQL_USER` / `MYSQL_PASSWORD` | 数据库 |
-| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | Redis |
-| `JWT_SECRET` | JWT 签名密钥（≥ 32 字节，放 Nacos `common.yml` 或 `.env`，勿提交） |
-| `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | OpenAI 兼容 LLM 端点 |
-| `EMBEDDING_BASE_URL` / `RERANKER_BASE_URL` | 向量化 / 重排 |
-| `MILVUS_HOST` / `MILVUS_PORT` | Milvus |
-| `EDUCARE_AGENT_LOOP_ENABLED` | AgentLoop 主路径开关（默认开） |
-| `educare.field-permission.enabled` | 字段级权限（默认开） |
-
-## 文档索引
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) · [DECISIONS.md](DECISIONS.md) · [RUNBOOK.md](RUNBOOK.md)
-- [生产部署](docs/DEPLOY.md) · [EduCare 执行计划](docs/educare/EXECUTION_PLAN.md) · [MCP 设计](docs/educare/MCP_DESIGN.md) · [字段权限](docs/educare/FIELD_PERMISSION.md) · [E2E 运行手册](docs/educare/E2E_RUNBOOK.md)
+| [架构](ARCHITECTURE.md) | 服务划分、端口、调用链 |
+| [设计决策](DECISIONS.md) | 每个取舍选了什么、放弃了什么 |
+| [运行手册](RUNBOOK.md) | 启动顺序、健康检查、排错 |
+| [部署](docs/DEPLOY.md) | 生产、监控与云端演示 |
+| [MCP 设计](docs/educare/MCP_DESIGN.md) | 工具定义与权限边界 |
+| [字段权限](docs/educare/FIELD_PERMISSION.md) | 按角色过滤敏感字段 |
+| [评测](eval/README.md) | 数据集、指标与 CI 门禁 |
+| [执行计划](docs/educare/EXECUTION_PLAN.md) | EduCare 任务进度与下一步 |
