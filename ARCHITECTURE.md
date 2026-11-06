@@ -339,6 +339,7 @@ user/role变更与登录的claims发行以admin角色行协调锁串行，账号
 
 | 日期/标识 | 变更 | 架构影响 |
 |---|---|---|
+| 2026-11-06 / README-SLIM-20261106 | README 改为项目首页，目录与配置表移入 RUNBOOK | 无架构影响：只改文档入口，模块边界、调用链与安全边界不变 |
 | 2026-10-06 / K3S-HPA-DEPLOY-20261006 | K3s/Secret/PVC、分阶段业务与data HPA | Node/metrics、12私有服务、11镜像、默认改密/三角色鉴权20项、MySQL隔离还原20表通过；HPA1→2已验，自动回缩1已验；完整AI/TLS待模型配置 |
 | 2026-10-06 / KAMATERA-DEPLOY-20261006 | Kamatera 共享云编排、安全源码包、知识导入路由、只读字体及 Rocky SELinux 适配 | 无模块边界变化；upsert 保留私网/Admin token，三个 bind 只读 Z relabel；押金到账及控制台 US$92 报价已核验，主机/SSH/Rocky/Docker主机验证通过，真实Pod运行待验证 |
 | 2026-10-06 / OCI-DEPLOY-20261006 | 新增独立 OCI 全栈编排、Caddy 同源入口、部署门禁及独立 embedding 凭据 | OCI 业务/数据/MCP 改用单主机 Docker DNS，模型调用为外部 HTTPS；公网只有 Caddy，账号及真实全栈待验证；详见 §1.3 与 OCI 部署手册 |

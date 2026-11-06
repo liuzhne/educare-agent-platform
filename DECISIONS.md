@@ -904,3 +904,14 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
 2026-10-15 / BUSINESS-INTEGRATION-20261015 补充：整合门禁发现Vue/server-renderer和source-map-js高危公告，选择兼容范围内修复锁文件并完整复跑前端，而不强制跨主版本升级开发工具。前端生产依赖审计已归零；以已通过Maven验证的JAR加官方JRE完成真实容器回归，明确区分运行镜像通过与生产多阶段源码镜像尚未构建完成。
 
 2026-10-15 / BUSINESS-INTEGRATION-20261015 CI修复：PR30首轮CI暴露AsyncSubmissionTest的隐式MyBatis缓存前置条件，单独执行在本机同样失败。选择在该测试BeforeEach建立元数据，不放宽QUEUE_FULL/FAILED/异步不执行等业务断言，不靠重跑碰运气或跳过测试。
+
+## README-SLIM-20261106：README 改为项目首页（2026-11-06）
+
+- 背景：README 标题是“Resource-Profile · 师生资源画像系统”，功能表从登录鉴权、系统管理排起，EduCare Agent 排在最后；仓库名 educare-agent-platform、标题 Resource-Profile、演示域名 edu-portrait 三个名字并存。第一次打开仓库的人先看到的是一个普通管理后台。
+- 选择：README 只回答“是什么、为什么值得用、怎么跑起来”。标题与一句话定位改为 EduCare Agent；6 条亮点先讲 Agent、检索、合规闸门、安全与评测，业务底座放最后；保留快速开始与一张流程图，其余链到三份项目文档与 `docs/`。目录结构与常用配置原样移到 RUNBOOK §2、§3.3。
+- 放弃方案：
+  - 保留旧 README 的目录结构与配置表：这些是开发时查的，放在首页把定位挤到第二屏；RUNBOOK 已有端口速查，放在一起更好找。
+  - 同时改仓库内其他文档、代码里的“Resource-Profile”名称：牵涉 CLAUDE.md、DECISIONS 标题、镜像与部署名，超出这次范围，名称统一由维护者决定。
+  - 放在线演示链接：Render 演示站是否仍可用没有核实，链接留在注释里，确认后再放。
+  - 写效果数字：评测阈值 0.85 只在配置模型端点时执行，没有可公开引用的实测结果前只写门禁。
+- 代价与约束：README 的快速开始仍需 JDK、Maven、Node、Docker 与外部模型端点，没有“一条命令起演示”的路径；仓库没有 LICENSE，README 不放许可证徽章。
