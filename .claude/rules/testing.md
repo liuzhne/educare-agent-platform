@@ -6,14 +6,14 @@
 - 单模块跑：`mvn -pl <module> test -Dtest=ClassName`；多模块带依赖：加 `-am` + `-Dsurefire.failIfNoSpecifiedTests=false`。
 - 不引入需要真实 MySQL/Redis/Nacos/Milvus/LLM 的测试到默认测试集。
 
-## Python（ai-inference-service · unittest）
-- 纯函数优先（如 `text_splitter`、`hybrid_retrieval`、`memory_store` 的 key/分桶函数）。
-- 外部依赖（redis/milvus/httpx/langchain）用**延迟 import** + 降级，使无依赖环境也能跑纯逻辑单测。
-- 跑：`python3 -m unittest tests.test_xxx`。
+## Python（仅 `scripts/`、`eval/` 运维与评测脚本 · unittest）
+- 旧 Python 服务 `ai-inference-service/` 已删除（存档于标签 `v0.9.0`）；RAG/知识逻辑的测试写在 Java `knowledge-service`。
+- 外部依赖（httpx 等）用**延迟 import** + 降级，使无依赖环境也能跑纯逻辑单测。
+- 跑：`python scripts/test-cloud-deploy.py`、`python scripts/test-k3s-deploy.py`（依赖见 `scripts/requirements-cloud.txt`）。
 
 ## Eval / 回归
 - 风险识别离线评测：`eval/run_eval.py`（`--validate-only` 纯 stdlib 体检数据集；`--threshold` 卡等级一致率）。
 - CI 门：`.github/workflows/eval-gate.yml`（validate 无条件 + threshold 条件）。
 
 ## 门禁
-- 每个原子任务完成跑一次相关单测；阶段完成跑 `mvn clean install` + Python 单测全绿再继续。
+- 每个原子任务完成跑一次相关单测；阶段完成跑 `mvn clean install` 全绿再继续；改了部署脚本则加跑对应 Python 脚本测试。

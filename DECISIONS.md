@@ -915,3 +915,13 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
   - 放在线演示链接：Render 演示站是否仍可用没有核实，链接留在注释里，确认后再放。
   - 写效果数字：评测阈值 0.85 只在配置模型端点时执行，没有可公开引用的实测结果前只写门禁。
 - 代价与约束：README 的快速开始仍需 JDK、Maven、Node、Docker 与外部模型端点，没有“一条命令起演示”的路径；仓库没有 LICENSE，README 不放许可证徽章。
+
+## PYTHON-SOURCE-REMOVAL-20261110：删除已退役的 Python 服务源码（2026-11-10）
+
+- 背景：JAVA-AI-MIGRATION-20261015 之后默认构建、Compose、K3s、Render 的 AI 运行入口都已是 Java，`ai-inference-service/` 只作迁移对照保留，却仍被 CI 路径过滤、CLAUDE.md/AGENTS.md 和 RUNBOOK 当作现役服务描述，容易让人改错地方。
+- 选择：先发布 `v0.9.0` 并锁定 `release/v0.9.0` 存档，再整目录删除旧 Python 服务；同步去掉 `backend-ci` 的路径触发、把 `eval-gate` 的触发路径换成 `backend/knowledge-service/**`，并改写现状文档。
+- 放弃方案：
+  - 连同 `scripts/*.py`、`eval/run_eval.py` 一起删：它们是部署、SQL 迁移、演示数据、桩 LLM 和评测门禁的现役工具，CI 与本地脚本都在调用，删除等于要用别的语言重写一遍。
+  - 改部署名 `ai-inference-service`、Feign 客户端 `AiInferenceClient` 和环境变量 `AI_INFERENCE_URL`：牵涉 Compose、K3s 清单、Render 与线上配置，属于独立的重命名变更。
+  - 逐条改写历史记录里指向已删文件的链接：历史条目保持原样，统一由本条说明去标签 `v0.9.0` 查。
+- 代价与约束：旧的 12 条合成种子知识随 `seed_knowledge.py` 一起离开工作区；生产镜像是否已切到 Java 未核实，不能据此声明线上 Python 已退役。

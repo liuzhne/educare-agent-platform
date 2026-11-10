@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Resource-Profile is a **Teacher-Student Resource Portrait System** (师生资源画像系统) — a microservices-based educational platform with a Vue 3 frontend, Spring Boot backend, and a Python AI inference sidecar (LLM + RAG over Milvus).
+Resource-Profile is a **Teacher-Student Resource Portrait System** (师生资源画像系统) — a microservices-based educational platform with a Vue 3 frontend, Spring Boot backend, and a Java knowledge/RAG service over Milvus (`backend/knowledge-service`). The old Python `ai-inference-service` source was removed on 2026-11-10; it is preserved at tag `v0.9.0`.
 
 ## EduCare 子系统路线图
 
@@ -14,12 +14,12 @@ The AI subsystem (agent-service + ai-inference-service + Multi-Agent + RAG + 本
 
 **Top-level layout:**
 - `/backend` — Java/Spring Boot microservices (Maven multi-module)
-- `/ai-inference-service` — Python FastAPI service for LLM inference & vector retrieval
 - `/frontend` — Vue 3 + Vite single-page application
 - `/docker` — Docker and docker-compose configuration
 - `/sql` — Database initialization scripts
+- `/scripts`, `/eval` — ops tooling (deploy, SQL migrations, demo data, mock LLM) and offline eval; these are Python scripts, not runtime services
 
-The Java side handles business logic, persistence, and orchestration. AI calls go through `agent-service`, which either talks to a local LLM via Spring AI's OpenAI-compatible client (default) or delegates to the Python `ai-inference-service` via Feign for RAG / embedding-heavy work.
+The whole runtime is Java. AI calls go through `agent-service`, which talks to the LLM via Spring AI's OpenAI-compatible client and calls `knowledge-service` via Feign for RAG retrieval. The deployment name `ai-inference-service` (port 8090) is kept for compatibility, but its image is built from `backend/knowledge-service` (`docker/Dockerfile.knowledge`).
 
 ## Backend — Spring Boot Microservices
 
@@ -41,7 +41,9 @@ The Java side handles business logic, persistence, and orchestration. AI calls g
 | `student-service` | 8084 | Student profile management |
 | `mental-service` | 8085 | Mental health assessment |
 | `data-service` | 8086 | Data analysis and dashboard |
-| `agent-service` | 8087 | LLM/Agent orchestration (Spring AI + Feign to Python) |
+| `agent-service` | 8087 | LLM/Agent orchestration (Spring AI + Feign to knowledge-service) |
+| `mcp-student-data` | 8094 | Student data MCP server |
+| `knowledge-service` | 8090 / 8095 | RAG retrieval, knowledge import, Milvus init (8090, deployed as `ai-inference-service`); knowledge-rag MCP (8095) |
 | `common` | — | Shared library (JWT, Result wrapper) |
 
 **Key Dependencies:**
@@ -50,7 +52,7 @@ The Java side handles business logic, persistence, and orchestration. AI calls g
 - MySQL 8.0.33
 - Spring Cloud Alibaba Nacos (Service Discovery + Configuration)
 - Spring AI OpenAI starter (`spring-ai-openai-spring-boot-starter`) — used by `agent-service`
-- Spring Cloud OpenFeign — used by `agent-service` to call `ai-inference-service`
+- Spring Cloud OpenFeign — used by `agent-service` to call `knowledge-service` (service name `ai-inference-service`)
 - Lombok 1.18.30
 
 **Backend Code Patterns:**
@@ -115,28 +117,23 @@ Global CORS is configured on the gateway (`allowedOrigins: "*"`).
 `agent-service` is the bridge between business services and LLM/RAG capabilities.
 
 - **Spring AI ChatClient** (configured in `SpringAiConfig`, single local `@Primary` bean) is wired against an OpenAI-compatible endpoint set by `spring.ai.openai.base-url` (defaults to `http://host.docker.internal:8091` — i.e., a llama.cpp / vLLM server running on the host) with model from `spring.ai.openai.chat.options.model` (default `qwen2.5-14b`). Use the fluent API: `chatClient.prompt().system(...).user(...).call().content()` or `.entity(Class)` for structured output (see `RiskAnalyzeService`).
-- **Feign client** `AiInferenceClient` (`name = "ai-inference-service"`, URL `${ai.inference.url:http://host.docker.internal:8090}`) calls into the Python service for `/api/v1/agent/risk`, `/api/v1/rag/retrieve`, `/api/v1/agent/plan`, and `/api/v1/agent/audit`. Use this when the call needs vector search or LangChain-side logic; use `ChatClient` directly for plain LLM calls.
+- **Feign client** `AiInferenceClient` (`name = "ai-inference-service"`, URL `${ai.inference.url:http://host.docker.internal:8090}`) calls the Java `knowledge-service` for `/api/v1/rag/retrieve`. Plan generation and audit run inside agent-service (`AgentGenerationService`); use `ChatClient` directly for plain LLM calls.
 - Async work is dispatched via the executor in `AsyncConfig`.
 - MyBatis-Plus auto-fill is wired in `MyMetaObjectHandler`.
 
-## ai-inference-service — Python FastAPI
+## knowledge-service — Java RAG / knowledge MCP
 
-**Runtime:** Python 3.10, FastAPI 0.110, uvicorn (single worker), default port **8090**.
+Spring Boot module at `/backend/knowledge-service` (package `com.edu.knowledge`), built by `docker/Dockerfile.knowledge`. It replaces the retired Python `ai-inference-service`; see `docs/educare/JAVA_AI_MIGRATION_20261015.md`.
 
-**Stack:**
-- LangChain 0.1.12 + `langchain-openai` for LLM chains against an OpenAI-compatible backend
-- `pymilvus` 2.4.1 for vector store access
-- `httpx`, `tenacity` for outbound calls and retries
-
-**Layout** (`/ai-inference-service/app`):
-- `main.py` — FastAPI factory, CORS, router registration
-- `core/config.py` — `Settings` reading env vars (`LLM_BASE_URL`, `LLM_MODEL`, `MILVUS_HOST`, `MILVUS_PORT`, `EMBEDDING_BASE_URL`, etc.)
-- `api/health.py`, `api/llm.py` — HTTP routers; add new endpoints here
-- `services/llm_client.py` — LLM client wrapper
+- `KnowledgeController` — `/api/v1/rag/retrieve`, `/api/v1/rag/upsert`, `/api/v1/rag/initialize`
+- `GenerationCompatibilityController` — legacy `/api/v1/agent/{risk|plan|audit}`, `/api/v1/llm/chat`, forwarded to agent-service
+- `KnowledgeTools` — knowledge-rag MCP tools (Streamable HTTP `/mcp`, port 8095)
+- `RagService`, `MilvusStore`, `Reranker`, `KnowledgeCache` — dense retrieval, Milvus access, optional rerank, Redis cache
+- `KnowledgeSecurityFilter` — REST read/generate needs the internal credential; writes need the admin token; MCP needs the MCP token
 
 **Important env defaults:**
-- `LLM_BASE_URL` → host LLM server (OpenAI-compatible)
 - `MILVUS_HOST` defaults to `milvus-standalone` (the docker-compose service name on `edu-network`)
+- `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `RERANKER_*`
 - The container reaches the host via `host.docker.internal`
 
 ## Frontend — Vue 3
@@ -185,7 +182,7 @@ Global CORS is configured on the gateway (`allowedOrigins: "*"`).
 | redis | redis:7-alpine | 6379:6379 | Cache & session storage |
 | nacos | nacos/nacos-server:v2.3.0 | 8848, 9848 | Service discovery & config |
 | gateway | Custom build | 8080:8080 | API gateway |
-| ai-inference-service | Custom build | 8090:8090 | Python LLM/RAG service |
+| ai-inference-service | Custom build (`Dockerfile.knowledge`) | 8090:8090 | Java knowledge-service (RAG) |
 | milvus-standalone | milvusdb/milvus:v2.4.1 | 19530, 9091 | Vector database |
 | etcd | quay.io/coreos/etcd:v3.5.5 | — | Milvus metadata |
 | minio | minio/minio | 9000, 9001 | Milvus object storage (console on 9001) |
@@ -231,19 +228,15 @@ npm run lint       # ESLint --fix on .vue/.js/.jsx/.cjs/.mjs
 npm run format     # Prettier on src/
 ```
 
-**ai-inference-service (Python):**
+**knowledge-service (Java RAG):**
 ```bash
-cd ai-inference-service
+cd backend && mvn -pl knowledge-service -am test -Dsurefire.failIfNoSpecifiedTests=false
 
-# Local dev (Python 3.10)
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8090 --reload
-
-# Or build & run via docker-compose along with Milvus
+# Build & run via docker-compose along with Milvus (service name is still ai-inference-service)
 cd ../docker && docker-compose up -d ai-inference-service milvus-standalone
 ```
 
-There is no Python test runner configured yet; if adding tests, prefer `pytest`.
+**Ops / eval scripts (Python):** `scripts/*.py` and `eval/run_eval.py` are standalone tools, e.g. `python scripts/test-cloud-deploy.py`, `python eval/run_eval.py --validate-only --input eval/risk_assessment.jsonl`.
 
 **Docker:**
 ```bash
@@ -287,9 +280,9 @@ docker-compose down -v                  # stop + drop volumes (wipes MySQL/Redis
 | Auth Config | `/backend/auth-service/src/main/resources/application.yml` |
 | Agent Config | `/backend/agent-service/src/main/resources/application.yml` |
 | Spring AI ChatClient wiring | `/backend/agent-service/src/main/java/com/edu/agent/config/SpringAiConfig.java` |
-| Feign → Python | `/backend/agent-service/src/main/java/com/edu/agent/feign/AiInferenceClient.java` |
-| Python entrypoint | `/ai-inference-service/app/main.py` |
-| Python settings | `/ai-inference-service/app/core/config.py` |
+| Feign → knowledge-service | `/backend/agent-service/src/main/java/com/edu/agent/feign/AiInferenceClient.java` |
+| Knowledge service entrypoint | `/backend/knowledge-service/src/main/java/com/edu/knowledge/KnowledgeApplication.java` |
+| Knowledge service config | `/backend/knowledge-service/src/main/java/com/edu/knowledge/KnowledgeConfig.java` |
 | Frontend Config | `/frontend/vite.config.js` |
 | Docker Compose | `/docker/docker-compose.yml` |
 | Database Init | `/sql/init/01_init.sql` |

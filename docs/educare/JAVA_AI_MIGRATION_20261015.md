@@ -44,7 +44,7 @@ Java默认生成方案采用现有Agent最终答案schema（deadline/goal/milest
 ## 退役与剩余验收
 
 - 默认Compose/Cloud Compose/K3s/Render的AI运行入口已换Java；`scripts/cloud_deploy.py`默认源码包不再含旧Python运行目录；CI服务测试改为Java，保留Python部署/eval工具测试。
-- `ai-inference-service/`旧目录保留为迁移对照，见[退役说明](../../ai-inference-service/RETIREMENT.md)；不是默认运行组件，不宣称仓库已无Python文件。
+- `ai-inference-service/`旧目录已于 2026-11-10 删除（PYTHON-SOURCE-REMOVAL-20261110），迁移对照与回滚源码见标签 `v0.9.0`；`scripts/`、`eval/` 仍有Python运维/评测工具，不宣称仓库已无Python文件。
 - 上线前在隔离环境完成镜像、真实Redis/Milvus、三工具一致性、来源、持久化、内存/延迟、异常及备份恢复验证，再用明确授权的合成资料验证完整Agent、审核、PDF与反馈。此前生产JSON生成400并没有因这次重构被证明解决。
 - 发布需要成套切换agent与两个知识运行镜像，保存旧版本；变更不重建现有Milvus集合，不自动修改业务SQL。线上进程确认Java且真实验收通过后才完成JVM-4。
 - 模型成本/真实资料授权、R-5/R-6和既有B-2保持原门禁，不把已发布前端的17Ready记录当作本次新镜像证据。
