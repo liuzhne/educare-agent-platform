@@ -10,7 +10,7 @@ on:
   pull_request:
     paths:
       - "eval/**"
-      - "ai-inference-service/**"
+      - "backend/knowledge-service/**"
       - "backend/agent-service/**"
       - ".github/workflows/eval-gate.yml"
   workflow_dispatch:

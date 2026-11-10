@@ -1,6 +1,6 @@
 name: backend-ci
 
-# T15/A8：测试门禁。PR 触及后端/Python 即跑全量单测，必须全绿才可合并。
+# T15/A8：测试门禁。PR 触及后端即跑全量单测，必须全绿才可合并。
 # 安全关键单测（网关鉴权 JwtAuthGlobalFilter、越权 AccessGuard + 各 controller、字段权限
 # FieldPermissionAdvice、登录链 AuthServiceImpl）在此回归。
 # 覆盖率门：`mvn clean test` 已绑定 jacoco check（父 pom），对已补齐单测的安全关键类设硬阈值
@@ -11,7 +11,6 @@ on:
   pull_request:
     paths:
       - "backend/**"
-      - "ai-inference-service/**"
       - "docker/Dockerfile.*"
       # Include credential-file variants so tracking them triggers the preflight gate.
       - "docker/.env*"
@@ -26,7 +25,6 @@ on:
     branches: [main]
     paths:
       - "backend/**"
-      - "ai-inference-service/**"
       - "docker/Dockerfile.*"
       # Include credential-file variants so tracking them triggers the preflight gate.
       - "docker/.env*"

@@ -27,7 +27,7 @@
 
 ## 快速开始
 
-需要 JDK 21、Maven、Node.js 18+、Docker、Python 3.10+。
+需要 JDK 21、Maven、Node.js 18+、Docker；Python 3.10+ 只用于 `scripts/`、`eval/` 下的运维与评测脚本。
 
 ```bash
 docker compose -f docker/docker-compose.yml up -d mysql redis nacos milvus-standalone etcd minio ai-inference-service
@@ -49,7 +49,7 @@ cd frontend && npm install && npm run dev        # http://localhost:5173
       NONE / LOW 直接完成 · MEDIUM / HIGH ─► 合规审核 ─► 放行 / 驳回
 ```
 
-技术栈：Vue 3 · Spring Boot 3 / Spring Cloud / Spring AI · FastAPI · Milvus · MySQL · Redis · Nacos。
+技术栈：Vue 3 · Spring Boot 3 / Spring Cloud / Spring AI · Milvus · MySQL · Redis · Nacos。
 
 ## 文档
 

@@ -6,8 +6,9 @@
 ## 1. 快速开始
 
 ```bash
-# 1) 起 ai-inference-service
-cd ai-inference-service && uvicorn app.main:app --port 8090
+# 1) 起 Java knowledge-service（部署名仍为 ai-inference-service，:8090）与 agent-service
+#    /api/v1/agent/risk 需要内部凭证：运行前导出 EDUCARE_INTERNAL_TOKEN
+cd docker && docker compose up -d ai-inference-service && cd ..
 
 # 2) 跑全集（默认 4 并发，约需 50 * LLM_单次延迟 / 4 秒）
 python eval/run_eval.py
@@ -63,7 +64,7 @@ python eval/run_eval.py \
 ```
 
 字段语义：
-- `input.student_profile` 直接作为 `POST /api/v1/agent/risk` 的 body（Python 端按 `RiskRequest` schema 解析，未列字段被忽略；缺字段不报错）
+- `input.student_profile` 直接作为 `POST /api/v1/agent/risk` 的 body（由 Java knowledge-service 的兼容入口转给 agent-service 处理）
 - `expected.risk_level` 是 ground truth 等级
 - `expected.primary_type_hints` 当前**未参与**自动评分（保留给后续多标签 F1 用）
 - `expected.key_phrases` 用于关键短语命中率打分（大小写不敏感 substring 在 LLM 响应文本 blob 中的命中比例）
@@ -80,7 +81,7 @@ python eval/run_eval.py \
 
 ## 5. CI 接入（H-6 已落地）
 
-workflow：`.github/workflows/eval-gate.yml`，PR 触发（paths 命中 `eval/` `ai-inference-service/` `agent-service/`）。两段式：
+workflow：`.github/workflows/eval-gate.yml`，PR 触发（paths 命中 `eval/` `backend/knowledge-service/` `backend/agent-service/`）。两段式：
 
 1. **validate-dataset（无条件跑）**：`python eval/run_eval.py --validate-only` —— 纯 stdlib 体检 50 例
    数据集完整性（id 唯一 / input 非空 / `risk_level` 合法），秒级零依赖，永远作为硬门。

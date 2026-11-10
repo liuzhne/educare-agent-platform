@@ -1,3 +1,0 @@
-# Optional SDK contract suite; no LangChain, Milvus or external service required.
--r requirements.txt
-langfuse==4.13.1

@@ -629,3 +629,7 @@ agent-service 内部新增抽象层：`AgentTaskServiceImpl → AgentRunner（�
 2026-10-15 / BUSINESS-INTEGRATION-20261015 补充：无业务边界变化：前端锁文件修复Vue/source-map-js的生产依赖漏洞；新增本地运行镜像验证入口（scripts/local-java-ai/Dockerfile），生产多阶段Dockerfile保持独立。Java容器运行已验证，生产多阶段源码镜像构建仍受JDK基础层下载限制。
 
 2026-10-15 / BUSINESS-INTEGRATION-20261015 CI修复：无架构影响：AsyncSubmissionTest独立初始化AgentTask的MyBatis元数据，消除依赖其他测试类先运行的顺序耦合；生产代码及数据库边界不变。
+
+## 维护记录：PYTHON-SOURCE-REMOVAL-20261110（2026-11-10）
+
+无运行时架构影响。删除已退役的 `ai-inference-service/` 旧 Python 源码目录；运行时边界自 JAVA-AI-MIGRATION-20261015 起即为 Java [knowledge-service](./backend/knowledge-service)（8090 RAG/导入、8095 knowledge-rag MCP）与 agent-service，部署名 `ai-inference-service` 保留。本文更早条目中指向 `ai-inference-service/...` 的链接为历史记录，文件见标签 `v0.9.0`。仓库内剩余的 Python 只有 `scripts/`、`eval/` 的运维与评测工具，不属于运行服务。

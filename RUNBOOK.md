@@ -218,8 +218,8 @@ backend/                 Maven 多模块（Java 21）
   data-service/          8086  看板统计
   agent-service/         8087  风险任务、AgentLoop、审核编排、导出、SSE
   mcp-student-data/      8094  学生数据 MCP server
+  knowledge-service/     8090  dense RAG、知识导入、Milvus 初始化（部署名 ai-inference-service）；8095 knowledge-rag MCP
   common/                      Result、JWT、AccessGuard、字段权限、Prompt 清洗
-ai-inference-service/    Python FastAPI：legacy risk/plan/audit、dense RAG、knowledge-rag MCP（:8095）
 frontend/                Vue 3 · Vite · Element Plus · Pinia · ECharts
 docker/                  开发 / 生产 / 监控 compose、各服务 Dockerfile、nginx、Prometheus/Grafana
 sql/                     初始化与生产改密脚本
@@ -272,9 +272,9 @@ MySQL 容器首次创建数据卷时会按文件名顺序执行 `sql/init/`。�
 
 ### 4.1 重要现状
 
-`docker/docker-compose.yml` **不是完整业务全栈**：它没有 auth/user/teacher/student/mental/data 六个 service 定义。推荐开发方式是 Docker 启基础设施和 Python RAG，Java 业务服务在宿主分别运行。
+`docker/docker-compose.yml` **不是完整业务全栈**：它没有 auth/user/teacher/student/mental/data 六个 service 定义。推荐开发方式是 Docker 启基础设施和 Java 知识服务（compose 服务名仍为 `ai-inference-service` / `knowledge-rag-mcp`），Java 业务服务在宿主分别运行。
 
-### 4.2 启动基础设施与 Python 服务
+### 4.2 启动基础设施与知识服务
 
 在仓库根目录执行：
 
@@ -383,16 +383,15 @@ mvn -pl gateway test -Dtest=JwtAuthGlobalFilterTest
 mvn -pl mcp-student-data test -Dtest=StudentDataToolsContractTest
 ```
 
-### 5.2 Python
+### 5.2 Python（仅运维脚本）
 
-CI 使用最小、无外部服务测试依赖：
+旧 Python 服务及其单测已随 PYTHON-SOURCE-REMOVAL-20261110 删除，RAG/知识逻辑的测试在 `backend/knowledge-service`（见 5.1）。仓库里剩下的 Python 只有 `scripts/`、`eval/` 工具，CI 跑的是部署脚本测试：
 
 ```bash
-cd ai-inference-service
 python3 -m venv .venv-test
 source .venv-test/bin/activate
-pip install -r tests/requirements.txt
-python -m unittest discover -s tests -p "test_*.py" -v
+pip install -r scripts/requirements-cloud.txt
+python scripts/test-cloud-deploy.py && python scripts/test-k3s-deploy.py
 ```
 
 ### 5.3 前端
@@ -475,15 +474,17 @@ curl -sS http://localhost:8080/agent/api/v1/task/$TASK \
 
 ### 6.4 RAG 灌库与检索
 
-当前主 FastAPI app 没有注册 `rag_upsert.router`，所以不要用 `/api/v1/rag/upsert` 做运行验收。先使用仓库脚本灌种子知识：
+集合初始化和知识导入由 Java knowledge-service 承担（[KnowledgeController](./backend/knowledge-service/src/main/java/com/edu/knowledge/KnowledgeController.java)），两个写接口都要 `X-Admin-Token`（`EDUCARE_ADMIN_TOKEN`）：
 
 ```bash
-cd ai-inference-service
-MILVUS_HOST=localhost python -m scripts.init_milvus
-MILVUS_HOST=localhost EMBEDDING_BASE_URL=http://localhost:8092/v1 python -m scripts.seed_knowledge
+# 建立/校验 Milvus 集合（已有集合只校验并加载）
+curl --fail -X POST -H "X-Admin-Token: $EDUCARE_ADMIN_TOKEN" http://127.0.0.1:8090/api/v1/rag/initialize
+# 导入已审阅的公开语料（先 check 取摘要，再 apply）
+python3 scripts/public-rag-corpus.py check
+python3 scripts/public-rag-corpus.py apply --expected-sha256 <check 输出的摘要>
 ```
 
-`rag_upsert.py` 的实现和隔离测试可参考 [`docs/educare/RAG_UPSERT_DESIGN.md`](./docs/educare/RAG_UPSERT_DESIGN.md)，但只有主应用实际挂载 router、配置 `EDUCARE_ADMIN_TOKEN` 并通过 HTTP 验收后，才能把 `/api/v1/rag/upsert` 记为可用。RAG 质量通过判据是使用真 BGE 向量的质量集达到已固化 dense baseline；仅“返回非空”只能证明机械链路。
+旧的 `scripts.init_milvus` / `scripts.seed_knowledge`（含 12 条合成种子知识）已随 Python 服务删除，需要时从标签 `v0.9.0` 取。上面的本地命令在删除后未实跑，待验证。导入设计背景见 [`docs/educare/RAG_UPSERT_DESIGN.md`](./docs/educare/RAG_UPSERT_DESIGN.md)。RAG 质量通过判据是使用真 BGE 向量的质量集达到已固化 dense baseline；仅“返回非空”只能证明机械链路。
 
 ## 7. 常见排错
 
@@ -1627,3 +1628,10 @@ docker compose -f scripts/local-java-ai/compose.yaml stop
 2026-10-15 / BUSINESS-INTEGRATION-20261015 补充：补充已执行结果：整合后732 Java回归、63 Python兼容测试（1可选SDK跳过）通过；修复前端锁文件后test/lint/build/size及生产依赖audit（0漏洞）通过。运行镜像验证命令：`docker build -f scripts/local-java-ai/Dockerfile -t resource-profile-knowledge:local-migration-20261015 .`（先执行JDK21 Maven verify）；37容器检查、12重启检查通过。重启时先等Milvus就绪，启动窗口503不是持久化失败。生产多阶段Dockerfile的源码构建仍待网络恢复后单独验证。
 
 2026-10-15 / BUSINESS-INTEGRATION-20261015 CI修复：PR30测试顺序回归：单独运行`mvn -pl agent-service -am test -Dtest=AsyncSubmissionTest -Dsurefire.failIfNoSpecifiedTests=false -Djacoco.skip=true`（单类诊断不跑聚合覆盖率门）可复现修复前失败；修复后须单类通过，再全量clean verify（不跳过JaCoCo）通过及PR CI绿。实际结果见整合报告。
+
+## 维护记录：PYTHON-SOURCE-REMOVAL-20261110（2026-11-10）
+
+- 变更：删除已退役的 `ai-inference-service/` 旧 Python 服务源码（58 个文件）；`scripts/`、`eval/` 的 Python 运维与评测工具保留。删除前的完整代码存档于标签 `v0.9.0` 与只读分支 `release/v0.9.0`。
+- 验证：`cd backend && mvn -pl knowledge-service,agent-service -am test`；`python scripts/test-cloud-deploy.py && python scripts/test-k3s-deploy.py`；`python eval/run_eval.py --validate-only --input eval/risk_assessment.jsonl`。2026-11-10 实际结果：部署脚本测试 17 + 15 项通过，评测数据集体检 50 例通过；Maven 测试待验证（执行机器只有 JDK 25，被 Enforcer 拦下；本次未改 Java 代码）。
+- 注意：本文 2026-10-15 之前的条目里指向 `ai-inference-service/...` 的链接与 `cd ai-inference-service` 命令是历史记录，对应文件已不在工作区；其中“在 ai-inference-service 容器内执行 python”的做法对 Java 镜像不适用。
+- 回滚：`git checkout v0.9.0 -- ai-inference-service` 可取回源码。生产是否仍在跑旧 Python 镜像未核实，线上退役判据仍以 JAVA-AI-MIGRATION-20261015 的“部署与通过判据”为准。
