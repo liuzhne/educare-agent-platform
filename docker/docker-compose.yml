@@ -89,7 +89,7 @@ services:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
     ports:
-      - "127.0.0.1:19530:19530"  # gRPC 端口（Python/Java SDK 连接）
+      - "127.0.0.1:19530:19530"  # gRPC 端口（SDK 连接）
       - "127.0.0.1:9091:9091"    # RESTful API 端口
     volumes:
       - ./milvus/milvus:/var/lib/milvus

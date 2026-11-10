@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 本机测试环境一键起停：Docker 起基础设施 + Python/MCP，9 个 Java 服务与前端在宿主后台运行。
+# 本机测试环境一键起停：Docker 起基础设施 + 知识服务/MCP，9 个 Java 服务与前端在宿主后台运行。
 #
 # 为什么不用 docker compose 起全栈：docker-compose.yml 没有 auth/user/teacher/student/mental/data
 # 六个 service 定义（见 RUNBOOK.md §4.1），业务服务只能在宿主跑。

@@ -1,5 +1,7 @@
 # EduCare Agent 改进方案（2026.05 版）
 
+> **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
+
 > **状态**：v1.1 — Section 8 关键问题已拍板（2026-05-12），开始执行 Phase G
 > **作者**：基于 SubAgent 架构诊断 + 2026 年 5 月主流范式评测产出
 > **关系**：本文档是 G/H/I 三阶段的**设计源 / 决策依据**；可执行的原子任务清单与进度状态见 [`EXECUTION_PLAN.md`](./EXECUTION_PLAN.md)（按本文档拆解而来）

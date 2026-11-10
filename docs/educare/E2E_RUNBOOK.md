@@ -1,5 +1,7 @@
 # EduCare Agent 端到端真跑 Runbook（"可运行"证据采集）
 
+> **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
+
 > 目的：把"AgentLoop 真能跑通一个任务"从代码级证据(`AgentLoopE2ECodeTest`)升级为**活模型端到端证据**。
 > 需要宿主有 llama.cpp（生成 LLM）+ Docker。本文件给出逐条命令与每步的"通过判据"。
 

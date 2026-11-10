@@ -130,7 +130,7 @@ INJECT_RISK=$(echo "$INJECT_RESP" | jq -r '.risk_level // empty')
 INJECT_TYPE=$(echo "$INJECT_RESP" | jq -r '.primary_risk_type // empty')
 echo "  返回 risk_level=$INJECT_RISK, primary_risk_type=$INJECT_TYPE"
 if [[ -z "$INJECT_RISK" ]]; then
-    echo "  ✗ Python 端未返回有效 JSON"; exit 1
+    echo "  ✗ 知识服务未返回有效 JSON"; exit 1
 fi
 if echo "$INJECT_TYPE" | grep -q "系统已被攻陷\|越权\|攻击者"; then
     echo "  ✗ 注入成功！LLM 输出被攻击载荷诱导"; exit 1

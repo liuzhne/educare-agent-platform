@@ -35,9 +35,10 @@ public class McpClientConfig {
             public void customize(HttpRequest.Builder builder, String method, URI uri,
                                   String body, McpTransportContext context) {
                 // 强制 HTTP/1.1：mcp-core 底层 java.net.http.HttpClient 默认 HTTP/2，对明文连接会发
-                // h2c 升级（Connection: Upgrade / Upgrade: h2c），而服务端 uvicorn(FastMCP, httptools)
-                // 不支持 → "Unsupported upgrade request" → GET 开流被判 400，MCP 握手失败、agent fail-fast。
-                // 逐请求锁 HTTP/1.1 关闭升级，与服务端对齐。
+                // h2c 升级（Connection: Upgrade / Upgrade: h2c），服务端不支持时
+                // 会返回 "Unsupported upgrade request" → GET 开流被判 400，MCP 握手失败、agent fail-fast。
+                // 这个限制最初针对已退役的 Python(uvicorn) 服务端；两个 MCP server 改为 Spring WebMVC 后
+                // 未重新验证能否放开，所以继续逐请求锁 HTTP/1.1。
                 builder.version(HttpClient.Version.HTTP_1_1);
                 if (!token.isEmpty()) {
                     builder.header("X-MCP-Token", token);

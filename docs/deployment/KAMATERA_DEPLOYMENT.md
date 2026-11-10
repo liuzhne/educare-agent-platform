@@ -1,5 +1,7 @@
 # Kamatera 单节点 K3s 部署
 
+> **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
+
 > 日期 / 修复标识：2026-10-06 / KAMATERA-DEPLOY-20261006
 > 最近更新：2026-10-07（LANGFUSE-OTLP-20261007：Cloud认证、v4迁移及默认内容关闭）
 > 状态：账号已注册，US$10 押金已到账；`resource-profile-sg` 实例已创建并开启，SSH 主机指纹已通过可信控制台核验。Rocky 9.8 / x86_64、资源容量、SELinux Enforcing、Docker 29.8.2 / Compose 5.6.0、引擎 SELinux、hello-world 和 firewalld active 已实查。正式路径改为单节点 K3s，首轮仅 data-service 在 1–2 副本间 HPA，其他服务固定 1；K3s v1.36.5+k3s1、Node Ready / metrics-server、11应用镜像构建导入、16私有服务和前端共17工作负载全部Ready已核验，三角色登录/鉴权/退出撤销20项通过；HPA受控CPU负载1→2通过、自动回缩1已验，完整AI验收尚未完成；2026-10-07网站已发布，受信HTTPS及外部鉴权/端口边界通过。

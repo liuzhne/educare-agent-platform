@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # H-1.4：两个 MCP server 的 Streamable HTTP happy-path 冒烟
 #   - student-data   (Java,   端口 8094)：4 个 tool
-#   - knowledge-rag  (Python, 端口 8095)：3 个 search tool
+#   - knowledge-rag  (Java,   端口 8095)：3 个 search tool
 # 用法：
 #   bash scripts/mcp_smoke_test.sh
 #   STUDENT_ID=1 STUDENT_DATA_URL=http://localhost:8094 \
@@ -182,7 +182,7 @@ fi
 
 # ---- [2/2] knowledge-rag ----
 echo
-echo "[2/2] knowledge-rag (端口 8095, Python FastMCP)"
+echo "[2/2] knowledge-rag (端口 8095, Java knowledge-service)"
 if handshake "knowledge-rag" "$KNOWLEDGE_RAG_URL"; then
     list_tools "knowledge-rag" "$KNOWLEDGE_RAG_URL" \
         search_cases search_policies search_psychology

@@ -85,7 +85,7 @@ python3 scripts/k3s-deploy.py publish
 python3 scripts/k3s-deploy.py status
 ```
 
-`render` 不覆盖已有文件，也不在终端输出秘密。`apply-private` 先移除旧 frontend，按数据库→Milvus→域服务→双MCP/Python→agent→gateway 依次等待实际Ready；Kubernetes API通过 stdin接收Secret，使用server-side apply避免客户端last-applied注解复制秘密。Secret使用标准`data`字段以避免官方说明的`stringData`/server-side apply限制；base64只编码、不提供保密性，解析清单仍必须保持0600。真实env变化会通过模板哈希触发Pod重建。
+`render` 不覆盖已有文件，也不在终端输出秘密。`apply-private` 先移除旧 frontend，按数据库→Milvus→域服务→双MCP/知识服务→agent→gateway 依次等待实际Ready；Kubernetes API通过 stdin接收Secret，使用server-side apply避免客户端last-applied注解复制秘密。Secret使用标准`data`字段以避免官方说明的`stringData`/server-side apply限制；base64只编码、不提供保密性，解析清单仍必须保持0600。真实env变化会通过模板哈希触发Pod重建。
 
 `bootstrap-seeds` 对当前数据库执行真实 bcrypt 校验；即便默认密码重新加盐也会阻止发布，并拒绝覆盖未知已迁移密码。`init-rag` 只建立集合，不等于灌库/检索验收。`probe-models` 用合成文本执行真实chat及embedding调用并核对向量维度，可能消耗供应商额度，供应商成本不包含在VM免费试用中。
 

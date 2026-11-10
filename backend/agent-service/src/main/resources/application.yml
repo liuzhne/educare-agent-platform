@@ -18,7 +18,7 @@ spring:
             readTimeout: 90000   # plan/audit 经过 LLM 可能 60s+，留余量
           ai-inference-service:
             connectTimeout: 5000
-            readTimeout: ${AI_INFERENCE_READ_TIMEOUT_MS:240000} # Python bounded 180s wait/request + network margin
+            readTimeout: ${AI_INFERENCE_READ_TIMEOUT_MS:240000} # knowledge-service 检索调用的读超时；数值沿用迁移前的设置
 
     # Sentinel 流控（D 阶段）：dashboard 留空则只启用本地编码规则，不上报
     sentinel:
@@ -102,9 +102,8 @@ spring:
               endpoint: /mcp
             knowledge-rag:
               url: ${MCP_KNOWLEDGE_RAG_URL:http://localhost:8095}
-              # FastAPI/Starlette mounts the Streamable HTTP app at the canonical
-              # slash-terminated path. Keep this overridable because the standalone
-              # local MCP server may still expose the historical /mcp endpoint.
+              # knowledge-service (Spring AI MCP) serves Streamable HTTP at /mcp.
+              # Kept overridable because deployments set this variable explicitly.
               endpoint: ${MCP_KNOWLEDGE_RAG_ENDPOINT:/mcp}
 
 mybatis-plus:

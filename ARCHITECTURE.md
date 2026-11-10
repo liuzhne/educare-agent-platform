@@ -83,7 +83,7 @@ flowchart LR
 
 用户已明确选择 K3s + HPA（2026-10-06 / K3S-HPA-DEPLOY-20261006），本次正式编排改为 [`k8s/workloads.json`](./k8s/workloads.json) 与 [`scripts/k3s-deploy.py`](./scripts/k3s-deploy.py)。11 个 Java 进程（2026-10-15 源码配置；生产切换待验收）、MySQL/Redis/Milvus/etcd/MinIO 与 Caddy 前端共 17 个工作负载，通过 ClusterIP 与服务 DNS 在同一主机内通信；关闭 Nacos，以显式 URL 保留领域调用契约。Docker 仅负责镜像构建，镜像导入 K3s 独立 containerd；[`docker/docker-compose.cloud.yml`](./docker/docker-compose.cloud.yml) 保留为环境来源和备选运行方式，不与 K3s 同时启动。只有通过发布门的 Caddy 使用 hostPort TCP 80/443，API 与 SSE 同源；其余服务没有公网端口。K3s 禁用 Traefik/ServiceLB，保留 CoreDNS、metrics-server 和 local-path。节点 API 可监听节点地址，但 firewalld 禁止公网 6443/8472/10250，管理仅经 SSH 本机执行。
 
-首轮仅 data-service 启用 HPA（CPU request 100m、目标 70%、副本 1–2、缩容稳定窗口 300 秒）。其余工作负载固定 1；agent 本地 executor/PDF 文件、MCP 会话和 Python 知识导入尚未完成跨副本及缩容验收。SSE 已有 Redis fan-out，不因此误判为完全无法多副本。全栈基础 requests 为 1.8 CPU / 9.1875 GiB，limits 为 17.25 GiB，HPA 最大 limits 为 17.75 GiB；这些预算不是实际吞吐证明。HPA 只改变 Pod 数，不增加 VM 容量或提供节点高可用。持久化为 8 个单机 local-path PVC，共申请 46 GiB；单例升级采用 Recreate，数据不具备跨节点复制。
+首轮仅 data-service 启用 HPA（CPU request 100m、目标 70%、副本 1–2、缩容稳定窗口 300 秒）。其余工作负载固定 1；agent 本地 executor/PDF 文件、MCP 会话和知识导入尚未完成跨副本及缩容验收。SSE 已有 Redis fan-out，不因此误判为完全无法多副本。全栈基础 requests 为 1.8 CPU / 9.1875 GiB，limits 为 17.25 GiB，HPA 最大 limits 为 17.75 GiB；这些预算不是实际吞吐证明。HPA 只改变 Pod 数，不增加 VM 容量或提供节点高可用。持久化为 8 个单机 local-path PVC，共申请 46 GiB；单例升级采用 Recreate，数据不具备跨节点复制。
 
 此部署的生成模型和 embedding 使用外部 HTTPS API；[`embedding_client.py`](./ai-inference-service/app/services/embedding_client.py) 支持独立 `EMBEDDING_API_KEY`，为空时兼容共享生成模型密钥。可选 reranker 默认关闭，dense RAG、双 MCP 和 AgentLoop 保留。真实学生/心理数据迁移及外部模型处理必须先确定授权范围；准备配置不代表已迁移数据、已取得模型使用额度或完成 R-5/R-6。
 
@@ -281,7 +281,7 @@ user/role变更与登录的claims发行以admin角色行协调锁串行，账号
 
 - `docker/docker-compose.yml` 当前声明 AI/数据基础设施、gateway、agent-service 和两个 MCP server；它**没有**声明 auth/user/teacher/student/mental/data 六个业务服务。
 - `docker/docker-compose.prod.yml` 只增加 nginx/frontend/TLS 覆盖层。因此当前仓库不能仅凭一次 `docker compose up` 宣称完整业务全栈上线；缺失的业务服务必须以宿主进程/外部部署提供，或在 R-6.2 前补齐 compose 定义并验收。
-- `rag_upsert` 的路由实现和隔离测试存在，但主 FastAPI app 未挂载该 router；这是运行面与代码产物之间的已知偏差。
+- `/api/v1/rag/upsert` 与 `/api/v1/rag/initialize` 由 Java knowledge-service 提供并要求 admin 凭证；真实环境的导入/检索验收状态见 JAVA-AI-MIGRATION-20261015。
 - `langfuse` 和 `monitoring` 都是 profile 门控，默认不启动。
 - 生成模型、embedding 和 reranker 运行在宿主机，通过 `host.docker.internal` 被容器访问；权重和启动器不是仓库交付物。
 - 截至 2026-09-01，真 Qwen 14B、真 BGE 质量基线、Langfuse 活 trace 和生产 TLS/备份恢复/告警全栈证据仍属于 R-5/R-6 待办。
@@ -331,7 +331,7 @@ user/role变更与登录的claims发行以admin角色行协调锁串行，账号
 ## 6. 变更原则
 
 - 新业务写入首先归属某个领域服务；Agent/MCP 不绕过领域边界直接写主数据。
-- 自 JAVA-AI-MIGRATION-20261015 起，检索能力统一扩展 Java knowledge-service 与 Spring AI MCP；Python 目录仅保留迁移参考，不进入运行包。
+- 自 JAVA-AI-MIGRATION-20261015 起，检索能力统一扩展 Java knowledge-service 与 Spring AI MCP；旧 Python 目录已于 2026-11-10 删除（PYTHON-SOURCE-REMOVAL-20261110，存档于标签 `v0.9.0`）。本节之前带日期标识的条目里出现的 Python / FastAPI / FastMCP 是当时的部署记录。
 - 新公网路由必须同时评估 gateway 准入、对象级授权、字段权限和审计。
 - 改变状态机、工具契约、数据所有权、跨服务调用或部署拓扑时，必须同步本文、[`DECISIONS.md`](./DECISIONS.md) 与 [`RUNBOOK.md`](./RUNBOOK.md)。
 
@@ -633,3 +633,5 @@ agent-service 内部新增抽象层：`AgentTaskServiceImpl → AgentRunner（�
 ## 维护记录：PYTHON-SOURCE-REMOVAL-20261110（2026-11-10）
 
 无运行时架构影响。删除已退役的 `ai-inference-service/` 旧 Python 源码目录；运行时边界自 JAVA-AI-MIGRATION-20261015 起即为 Java [knowledge-service](./backend/knowledge-service)（8090 RAG/导入、8095 knowledge-rag MCP）与 agent-service，部署名 `ai-inference-service` 保留。本文更早条目中指向 `ai-inference-service/...` 的链接为历史记录，文件见标签 `v0.9.0`。仓库内剩余的 Python 只有 `scripts/`、`eval/` 的运维与评测工具，不属于运行服务。
+
+2026-11-10 补充：注释与文档清理无架构影响；§5、§6 中描述 Python 运行形态的现行条目已改为 Java knowledge-service，带日期标识的历史条目保持原样。

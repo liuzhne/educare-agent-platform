@@ -15,7 +15,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-/** All generation stays in Spring AI; no automatic Python fallback or duplicate model request. */
+/** All generation stays in Spring AI; no automatic fallback to another service or duplicate model request. */
 @Service
 public class AgentGenerationService {
     private final ChatClient chat;

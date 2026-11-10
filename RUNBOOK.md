@@ -170,7 +170,7 @@ K3s 清单通过 Secret 引用真实环境变量，Milvus MinIO 配置也是 Sec
 | Maven | 3.x | 后端多模块构建 |
 | Node.js | 22（CI 基线） | 前端 Vite 8 构建 |
 | npm | 与 Node 22 配套 | 必须优先使用 `npm ci` |
-| Python | 3.10 | AI 服务与测试基线 |
+| Python | 3.10 | 仅 `scripts/`、`eval/` 运维与评测脚本 |
 | Docker Compose | Docker Compose v2 | MySQL/Redis/Nacos/Milvus/AI/生产覆盖层 |
 | 其他 | `curl`、`jq`；MCP smoke 需 bash ≥4 | 健康检查与自动验收 |
 | 可选模型 | OpenAI 兼容 :8091/:8092/:8093 | 生成、embedding、reranker |
@@ -525,7 +525,7 @@ docker compose logs --tail=200 -f gateway agent-service mcp-student-data knowled
 ### 8.1 发布前硬门
 
 1. `docs/educare/EXECUTION_PLAN.md` R-5/R-6 的对应证据已经实际完成；未完成时不得宣称生产就绪。
-2. Java、Python、前端、eval 与 preflight 测试全绿。
+2. Java、部署脚本（Python）、前端、eval 与 preflight 测试全绿。
 3. 真 Qwen AgentLoop、真 BGE dense baseline、Langfuse trace 已验收。
 4. auth/user/teacher/student/mental/data 六个业务服务已有明确部署目标；当前基础 compose 不包含它们。
 5. MySQL 备份与恢复、TLS、网关安全、字段权限、IDOR、MCP token、监控告警都已实跑。
@@ -581,7 +581,7 @@ GATEWAY=https://<domain>/api ADMIN_USER=admin ADMIN_PASS='<password>' bash scrip
 - 应用：保留上一版镜像 tag/构建产物和 compose 配置，恢复上一版本后 `docker compose up -d`；不要删除数据卷。
 - 配置：恢复经版本管理/变更记录确认的 Nacos 与 `.env` 配置，并重启受影响服务。密钥回滚必须考虑已签发 JWT/MCP 会话失效。
 - 数据库：初始化脚本以增量、向后兼容为原则。含破坏性 DDL 的发布必须先准备显式 down migration 或从已验证备份恢复；不得把 `down -v` 当回滚。
-- AI：可临时将 `EDUCARE_AGENT_LOOP_ENABLED=false` 回落 legacy，但前提是 Python :8090、LLM 与 RAG 依赖可用；回落后仍须跑安全与结果验收。
+- AI：可临时将 `EDUCARE_AGENT_LOOP_ENABLED=false` 回落 legacy，但前提是知识服务 :8090、LLM 与 RAG 依赖可用；回落后仍须跑安全与结果验收。
 - RAG：错误向量可按 doc_id 重灌；回滚 embedding 模型时必须同时匹配维度和重建对应集合/基线。
 
 ### RENDER-DEPLOY-20260901：Render Blueprint 启动与数据层排错
@@ -1640,3 +1640,5 @@ docker compose -f scripts/local-java-ai/compose.yaml stop
 - 验证：`cd backend && mvn -pl knowledge-service,agent-service -am test`；`python scripts/test-cloud-deploy.py && python scripts/test-k3s-deploy.py`；`python eval/run_eval.py --validate-only --input eval/risk_assessment.jsonl`。2026-11-10 实际结果：部署脚本测试 17 + 15 项通过，评测数据集体检 50 例通过；Maven 测试待验证（执行机器只有 JDK 25，被 Enforcer 拦下；本次未改 Java 代码）。
 - 注意：本文 2026-10-15 之前的条目里指向 `ai-inference-service/...` 的链接与 `cd ai-inference-service` 命令是历史记录，对应文件已不在工作区；其中“在 ai-inference-service 容器内执行 python”的做法对 Java 镜像不适用。
 - 回滚：`git checkout v0.9.0 -- ai-inference-service` 可取回源码。生产是否仍在跑旧 Python 镜像未核实，线上退役判据仍以 JAVA-AI-MIGRATION-20261015 的“部署与通过判据”为准。
+
+- 2026-11-10 补充：同一 PR 内清理了 Java/配置/脚本里指向 Python 服务的过时注释与提示语，并修正 `docs/` 现行文档；设计与部署历史文档只在标题下加统一说明，不逐条改写。验证：5 个 shell 脚本 `bash -n`、两份 YAML 解析、部署脚本测试通过；Java 仅改注释和一个测试方法名，本机无 JDK 21，编译与单测待 CI 验证。

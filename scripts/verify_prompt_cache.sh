@@ -95,6 +95,6 @@ echo
 echo "✗ 验收失败：第二次调用命中率 $RATIO < $THRESHOLD"
 echo "  排查："
 echo "  1) llama.cpp 启动是否带 --slots（必需）+ 默认 slot 数 ≥1"
-echo "  2) Python 侧请求体是否含 cache_prompt:true（查 ai-inference 日志的 chat_completion_raw 入口）"
+echo "  2) agent-service 发出的请求体是否含 cache_prompt:true（由 LlamaCppCachePromptInterceptor 注入）"
 echo "  3) Prompt 字节是否稳定（system prompt 文件第二次没有改动；user 同一 payload 序列化一致）"
 exit 1

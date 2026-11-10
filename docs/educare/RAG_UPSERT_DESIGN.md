@@ -1,5 +1,7 @@
 # 增量知识导入设计（G-4.1）
 
+> **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
+
 > **目标**：给 `ai-inference-service` 加 `POST /api/v1/rag/upsert`，让管理员能"逐篇"导入/更新案例、政策、心理学等知识，触发 BGE 嵌入 + Milvus 写入，幂等可重入。
 >
 > **范围**：本期只覆盖单文档级 upsert（一次一篇）。批量导入 / 文件上传走后续。
