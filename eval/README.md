@@ -7,8 +7,10 @@
 
 ```bash
 # 1) 起 Java knowledge-service（部署名仍为 ai-inference-service，:8090）与 agent-service
-#    /api/v1/agent/risk 需要内部凭证：运行前导出 EDUCARE_INTERNAL_TOKEN
-cd docker && docker compose up -d ai-inference-service && cd ..
+#    /api/v1/agent/risk 由知识服务转给 agent-service，两者都要起；内部凭证为空时知识服务返回 503，
+#    所以先导出同一个非空 EDUCARE_INTERNAL_TOKEN（容器和 run_eval.py 都读它）。agent-service 还需要可达的模型端点。
+export EDUCARE_INTERNAL_TOKEN=<与 agent-service 相同的非空值>
+cd docker && docker compose up -d --wait ai-inference-service agent-service && cd ..
 
 # 2) 跑全集（默认 4 并发，约需 50 * LLM_单次延迟 / 4 秒）
 python eval/run_eval.py

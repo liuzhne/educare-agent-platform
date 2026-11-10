@@ -233,7 +233,7 @@ npm run format     # Prettier on src/
 cd backend && mvn -pl knowledge-service -am test -Dsurefire.failIfNoSpecifiedTests=false
 
 # Build & run via docker-compose along with Milvus (service name is still ai-inference-service)
-cd docker && docker-compose up -d ai-inference-service milvus-standalone
+cd ../docker && docker-compose up -d ai-inference-service milvus-standalone
 ```
 
 **Ops / eval scripts (Python):** `scripts/*.py` and `eval/run_eval.py` are standalone tools, e.g. `python scripts/test-cloud-deploy.py`, `python eval/run_eval.py --validate-only --input eval/risk_assessment.jsonl`.

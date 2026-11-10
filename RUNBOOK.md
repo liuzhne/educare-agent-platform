@@ -276,10 +276,15 @@ MySQL 容器首次创建数据卷时会按文件名顺序执行 `sql/init/`。�
 
 ### 4.2 启动基础设施与知识服务
 
+启动前提：知识服务的三个凭证在 `docker-compose.yml` 里默认为空，为空时对应接口直接返回 503（检索/生成看 `EDUCARE_INTERNAL_TOKEN`，导入/初始化看 `EDUCARE_ADMIN_TOKEN`，`/mcp` 看 `EDUCARE_MCP_TOKEN`）。必须在 `docker compose up` **之前**导出，并让宿主上的 agent-service 等调用方使用同一组值；容器起来之后再在别的终端设置不会生效，需要重建容器。
+
 在仓库根目录执行：
 
 ```bash
 cd docker
+export EDUCARE_INTERNAL_TOKEN=<非空值，与各 Java 服务一致>
+export EDUCARE_ADMIN_TOKEN=<非空值>
+export EDUCARE_MCP_TOKEN=<非空值，与 agent-service、mcp-student-data 一致>
 docker compose up -d mysql redis nacos etcd minio milvus-standalone attu ai-inference-service knowledge-rag-mcp
 docker compose ps
 ```
@@ -499,8 +504,8 @@ python3 scripts/public-rag-corpus.py apply --expected-sha256 <check 输出的摘
 | AI 取数失败，Feign 调 student/mental/data 报 401 | 各服务 `EDUCARE_INTERNAL_TOKEN`；启动日志是否有「EDUCARE_INTERNAL_TOKEN 未配置」WARN | agent-service、mcp-student-data 与 student/mental/data 使用同一非空值，生产至少 32 字符；不要为排障关掉 `educare.service-auth.enabled` |
 | Agent 任务 `FAILED` | agent 日志、`agent_task.status`、LLM 原始输出 | 先区分 LLM 连接、JSON parse、ToolGuard、工具调用和 DB CAS；不要直接改成 COMPLETED |
 | RAG 返回空 chunks | :8092、Milvus collection、embedding dim、灌库记录 | 确认维度 1024、集合存在、真语料已 upsert；reranker 可临时关闭定位 |
-| `/api/v1/rag/upsert` 返回 404 | FastAPI OpenAPI、`app/main.py` router 注册 | 当前主 app 未挂载 `rag_upsert.router`，不能当作运行能力 |
-| `/api/v1/rag/upsert` 返回 503 | `EDUCARE_ADMIN_TOKEN` | 仅在 router 已挂载后适用；端点默认 fail-closed |
+| `/api/v1/rag/upsert` 返回 404 | 请求打到的是 :8090 还是 :8095；`KNOWLEDGE_API_ENABLED` | 导入接口由 Java [KnowledgeController](./backend/knowledge-service/src/main/java/com/edu/knowledge/KnowledgeController.java) 提供，只在 8090 的 API 实例上；8095 的 MCP 实例关闭了 REST 接口 |
+| `/api/v1/rag/upsert` 或 `/initialize` 返回 503 / 401 | 容器内 `EDUCARE_ADMIN_TOKEN`、请求头 `X-Admin-Token` | 凭证为空返回 503（fail-closed），不匹配返回 401；凭证正确仍 503 时查 Redis、Milvus、embedding 端点，以及是否有导入持有集合写锁 |
 | 看不到 Langfuse trace | profile、project keys、`LANGFUSE_HOST` | 容器内用 `http://langfuse-server:3000`，宿主用 `http://localhost:3001`；key 为空时是预期 no-op |
 | 前端请求 401 后跳登录 | 浏览器 token 与 gateway 会话 | 检查是否登出/重登导致旧 token 被覆盖；清理前端本地 token 后重登 |
 | PDF 中文方块 | `EDUCARE_FONT_PATH` | 提供可读的 Noto Sans SC 字体并重启 agent-service |
