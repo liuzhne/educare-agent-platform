@@ -286,9 +286,11 @@ Java knowledge-service 不提供删除集合的接口（初始化只校验已有
 3. 清掉被删集合的导入幂等记录和检索结果缓存。导入接口按 `集合 + doc_id` 记录内容摘要（默认保留 7 天），摘要相同会直接返回 `skipped=true` 而不写向量；`/initialize` 不会清它，不做这一步重灌可能"成功"但集合是空的。只删下面两类键，不要整段删 `edu:rag:*`（里面还有写锁和集合修订号）：
 
    ```bash
-   # 每个被删的集合各执行一次（示例为 edu_cases）；设置了 REDIS_PASSWORD 时给 redis-cli 加 -a
+   # 每个被删的集合各执行一次；键里用的是逻辑集合名，不是 Milvus 集合名：
+   #   case → edu_cases，psychology → edu_psychology，policy → edu_policies，success → edu_success
+   # 示例为 case；设置了 REDIS_PASSWORD 时给 redis-cli 加 -a
    docker compose -f docker/docker-compose.yml exec redis sh -c \
-       "redis-cli --scan --pattern 'edu:rag:upsert:java:v1:edu_cases:*' | xargs -r redis-cli del"
+       "redis-cli --scan --pattern 'edu:rag:upsert:java:v1:case:*' | xargs -r redis-cli del"
    # 检索结果缓存
    docker compose -f docker/docker-compose.yml exec redis sh -c \
        "redis-cli --scan --pattern 'edu:rag:java:v1:*' | xargs -r redis-cli del"
