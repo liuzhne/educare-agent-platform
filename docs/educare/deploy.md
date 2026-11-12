@@ -276,8 +276,28 @@ EDUCARE_SCHEDULE_ENABLED=true mvn -pl agent-service spring-boot:run
 知识库 / 向量字段任何变更后：
 Java knowledge-service 不提供删除集合的接口（初始化只校验已有集合，维度不匹配时拒绝）。重建步骤：
 
-1. 在 Attu（`http://localhost:8000`）里手工删除旧集合；这一步不可恢复，先确认有语料来源可重灌。
-2. 调用 `POST /api/v1/rag/initialize` 重新建集合，再按 §2.5 导入语料。
+1. §2.1 的基础设施命令不包含 Attu，先在仓库根目录启动它：
+
+   ```bash
+   docker compose -f docker/docker-compose.yml up -d attu
+   ```
+
+2. 在 Attu（`http://localhost:8000`）里手工删除旧集合；这一步不可恢复，先确认有语料来源可重灌。
+3. 清掉被删集合的导入幂等记录和检索结果缓存。导入接口按 `集合 + doc_id` 记录内容摘要（默认保留 7 天），摘要相同会直接返回 `skipped=true` 而不写向量；`/initialize` 不会清它，不做这一步重灌可能"成功"但集合是空的。只删下面两类键，不要整段删 `edu:rag:*`（里面还有写锁和集合修订号）：
+
+   ```bash
+   # 每个被删的集合各执行一次（示例为 edu_cases）；设置了 REDIS_PASSWORD 时给 redis-cli 加 -a
+   docker compose -f docker/docker-compose.yml exec redis sh -c \
+       "redis-cli --scan --pattern 'edu:rag:upsert:java:v1:edu_cases:*' | xargs -r redis-cli del"
+   # 检索结果缓存
+   docker compose -f docker/docker-compose.yml exec redis sh -c \
+       "redis-cli --scan --pattern 'edu:rag:java:v1:*' | xargs -r redis-cli del"
+   ```
+
+4. 调用 `POST /api/v1/rag/initialize` 重新建集合，再按 §2.5 导入语料。
+5. 验证：导入响应里 `skipped` 为 `false` 且 `chunks_written` 大于 0；在 Attu 里核对集合行数；再用 `POST /api/v1/rag/retrieve`（带 `X-Internal-Token`）或 MCP 的 search 工具实际检索到刚导入的文档。
+
+> 以上重建步骤是对照 `RagService` 的键名写的，未实跑，待验证。
 
 ### 4.3 缓存清理
 
