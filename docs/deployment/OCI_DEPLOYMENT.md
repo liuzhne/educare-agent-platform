@@ -1,5 +1,7 @@
 # OCI 单主机部署
 
+> **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
+
 > 日期 / 修复标识：2026-10-06 / OCI-DEPLOY-20261006
 > 状态：部署配置与本地静态验证已准备；Oracle 注册、资源创建和实际上线未完成。
 > 2026-10-06 / KAMATERA-DEPLOY-20261006：当前选用 [Kamatera 部署](KAMATERA_DEPLOYMENT.md)；本 OCI 文档保留为兼容参考，配置统一复用 cloud 文件。

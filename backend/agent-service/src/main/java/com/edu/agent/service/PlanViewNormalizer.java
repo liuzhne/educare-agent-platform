@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 
-/** Projects both the ReAct schema and the legacy Python plan into one UI/PDF DTO. */
+/** Projects both the ReAct schema and the legacy nested plan format (written before the Java migration) into one UI/PDF DTO. */
 public final class PlanViewNormalizer {
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)

@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 
 /**
  * Prompt 注入防护工具：清洗用户可控字段后，再用 XML 标签包裹注入 LLM。
- * 与 Python 端 app/services/prompt_guard.py 行为对齐（控制字符、角色行、字段长度上限）。
+ * 清洗规则：去控制字符、中和角色行、限制字段长度。
  */
 public final class PromptSanitizer {
 

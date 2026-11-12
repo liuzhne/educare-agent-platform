@@ -1,5 +1,7 @@
 # MCP 选型决策（H-1.1）
 
+> **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
+
 > **目标**：定 Phase H 瘦身版（仅 student-data + knowledge-rag 两个 MCP server + 主 Agent Loop）的 SDK 版本与传输模式，作为 H-1.2 / H-1.3 / H-2 落地的地基。
 >
 > **依据**：IMPROVEMENT §0 拍板 "Spring AI MCP 主力 + Python FastMCP 补 RAG/Memory"。

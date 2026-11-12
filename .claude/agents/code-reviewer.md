@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: EduCare 代码审查专家。审查 Java/Spring + Vue + Python 改动的正确性、复用/简化、本项目约定遵循度。当用户要求审查代码、检查 PR/diff 质量时使用。
+description: EduCare 代码审查专家。审查 Java/Spring + Vue + 运维脚本（Python）改动的正确性、复用/简化、本项目约定遵循度。当用户要求审查代码、检查 PR/diff 质量时使用。
 tools: Read, Grep, Glob, Bash
 ---
 

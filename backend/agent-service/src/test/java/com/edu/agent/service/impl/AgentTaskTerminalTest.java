@@ -171,7 +171,7 @@ class AgentTaskTerminalTest {
         assertThat(row.toString()).doesNotContain("private-prompt-or-provider-response");
     }
 
-    @Test void javaAuditProviderFailureRejectsTaskAndKeepsTypedDiagnosticsWithoutCallingPython() {
+    @Test void javaAuditProviderFailureRejectsTaskAndKeepsTypedDiagnostics() {
         row.setStatus(TaskStatus.PLAN_GENERATING); row.setInterventionPlan("{}");
         when(generation.complianceAudit(anyMap())).thenThrow(new LlmCallException("PROVIDER_RATE_LIMIT",429));
         ReflectionTestUtils.invokeMethod(service, "doExecuteAgentLoop", 42L);

@@ -1,5 +1,7 @@
 # Prompt Cache 验收手册（G-1.6）
 
+> **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
+
 > **覆盖范围**：当前只验证 Python 侧（`ai-inference-service`）的 llama.cpp slot prefix cache 命中率。Java 侧的 `Diagnostics` 端点 + Micrometer 接入待 G-1.5 Java 部分完成后补充。
 >
 > **依赖前置**：G-1.4 已透传 `cache_prompt:true`；G-1.5 Python 部分已在 `chat_completion_raw` 内调 `record_llm_response`。
@@ -14,8 +16,8 @@
 
 服务侧：
 ```bash
-# ai-inference-service（端口 8090）
-cd ai-inference-service && uvicorn app.main:app --host 0.0.0.0 --port 8090
+# 知识服务（部署名 ai-inference-service，端口 8090）与 agent-service；先导出 EDUCARE_INTERNAL_TOKEN
+cd docker && docker compose up -d --wait ai-inference-service agent-service
 ```
 
 ---

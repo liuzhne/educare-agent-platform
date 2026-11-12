@@ -26,7 +26,7 @@ import java.util.UUID;
  * Langfuse v4 OTLP HTTP/JSON exporter; one completed root generation span per call.
  *
  * <p>The existing call sites do not share trace context, so this client does not invent
- * parent/child relationships between AgentLoop, Java LLM and Python operations.
+ * parent/child relationships between AgentLoop and LLM operations.
  * Export runs on {@code agentExecutor}; missing configuration and transport failures
  * never affect the business result. Completed spans are exported once, without retries.
  *

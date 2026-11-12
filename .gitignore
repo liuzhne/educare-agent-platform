@@ -82,7 +82,7 @@ dist-ssr/
 build/
 *.local
 
-# Python (ai-inference-service / eval)
+# Python (scripts / eval)
 __pycache__/
 *.py[cod]
 *.egg-info/

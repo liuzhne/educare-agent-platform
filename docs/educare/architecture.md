@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | 网关 | gateway | 8080 | docker | 路由 / CORS / 限流入口 |
 | 业务编排 | agent-service | 8087 | host | Spring AI ChatClient + Feign 调用 ai-inference + 4 阶段状态机 |
-| AI 推理 | ai-inference-service | 8090 | docker | FastAPI + LangChain + 4 路由（risk/rag/plan/audit）|
+| 知识服务 | knowledge-service（部署名 ai-inference-service） | 8090 / 8095 | docker | Spring Boot：dense RAG、知识导入、knowledge-rag MCP；旧 risk/plan/audit 路径转给 agent-service |
 | LLM | llama.cpp（生成） | 8091（宿主） | host | Qwen2.5-14B Q5_K_M，Metal，3 槽位 |
 | Embedding | llama.cpp（BGE） | 8092（宿主） | host | bge-large-zh-v1.5，1024 维 |
 | Reranker | llama.cpp（reranker） | 8093（宿主） | host | bge-reranker-base |
@@ -62,6 +62,8 @@
 ---
 
 ## 2. 4-Agent 流水线（端到端时序）
+
+> **2026-11-10 说明**：下图是 Java 迁移前的四阶段时序。自 2026-10-15 起，方案生成与合规审核在 agent-service 内由 `AgentGenerationService` 直接调用模型，图中的 `ai-inference-service` 只负责 RAG 检索（Java knowledge-service）；默认主路径是 AgentLoop ReAct，当前调用链以根目录 `ARCHITECTURE.md` §2 为准。
 
 ```mermaid
 sequenceDiagram
@@ -118,7 +120,7 @@ sequenceDiagram
 
         Note over AS: 阶段 3：方案生成
         AS->>AI: POST /api/v1/agent/plan {profile, risk, knowledge_chunks}
-        AI->>LL: ChatClient (LangChain) 方案 prompt
+        AI->>LL: 方案 prompt
         LL-->>AI: 结构化方案 JSON
         AI-->>AS: JSON {report_title, immediate_actions, ...}
 
@@ -255,4 +257,4 @@ COMPLETED
 - 改进设计源：[`IMPROVEMENT_2026_MAY.md`](./IMPROVEMENT_2026_MAY.md)（v1.1 拍板）
 - DDL：[`/sql/init/03_agent_init.sql`](../../sql/init/03_agent_init.sql)
 - Java 主入口：[`AgentTaskServiceImpl`](../../backend/agent-service/src/main/java/com/edu/agent/service/impl/AgentTaskServiceImpl.java)
-- Python 路由：[`/ai-inference-service/app/api/`](../../ai-inference-service/app/api/)
+- 知识服务：[`/backend/knowledge-service/`](../../backend/knowledge-service/)

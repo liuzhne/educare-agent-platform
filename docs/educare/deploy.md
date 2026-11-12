@@ -14,7 +14,7 @@
 | Java | JDK 21 |
 | Maven | 3.8+ |
 | Node.js | 18+，npm 9+ |
-| Python | 3.10（仅本地调试 ai-inference 时需要） |
+| Python | 3.10（仅运行 `scripts/`、`eval/` 下的运维与评测脚本时需要） |
 | 磁盘 | ≥ 30GB（Qwen2.5-14B Q5_K_M ≈ 10GB；BGE-large ≈ 1GB；BGE-reranker ≈ 250MB） |
 | 内存 | ≥ 24GB（LLM 进程常驻 ~12GB） |
 
@@ -68,10 +68,10 @@ docker exec -i $(docker compose -f docker/docker-compose.yml ps -q mysql) \
 | mental-service | 8085 | 心理评估 |
 | data-service | 8086 | 数据分析 |
 | agent-service | 8087 | LLM/Agent 编排 |
-| ai-inference-service | 8090 | Python FastAPI（LLM+RAG） |
+| ai-inference-service | 8090 | Java knowledge-service：RAG 检索、知识导入、集合初始化 |
 | llama.cpp llm | 8091 | 宿主机 LLM 服务 |
 | **mcp-student-data** | **8094** | **H-1.2 + H-1.1.6：student-data MCP server（Streamable HTTP，单端点 `/mcp`）** |
-| **knowledge-rag MCP** | **8095** | **H-1.3：Python FastMCP knowledge-rag server（Streamable HTTP，单端点 `/mcp`），3 个 search tool（cases/policies/psychology）** |
+| **knowledge-rag MCP** | **8095** | **knowledge-rag MCP server（Java knowledge-service 的 MCP 实例，Streamable HTTP，单端点 `/mcp`），3 个 search tool（cases/policies/psychology）** |
 
 ### 2.3 启动 ai-inference-service（容器）
 
@@ -80,16 +80,13 @@ docker compose -f docker/docker-compose.yml up -d --build ai-inference-service
 docker compose -f docker/docker-compose.yml logs -f ai-inference-service | head -50
 ```
 
-H-1.3 起额外多一个独立进程的 MCP server（不合入 FastAPI 主进程，端口 8095，Streamable HTTP）：
+knowledge-rag MCP 是同一个 Java 镜像的另一个实例（端口 8095，`KNOWLEDGE_MCP_ENABLED=true`、`KNOWLEDGE_API_ENABLED=false`）：
 
 ```bash
-cd ai-inference-service
-pip install -r requirements.txt    # 引入 fastmcp>=2.3,<3.0
-python -m app.mcp.knowledge_rag_server
-# 日志出现 "knowledge-rag MCP server 启动 transport=streamable-http host=0.0.0.0 port=8095 path=/mcp" 即就绪
+docker compose -f docker/docker-compose.yml up -d --build knowledge-rag-mcp
 ```
 
-> docker-compose 编排该 server 留 H-1.4 smoke 时一并加入；当前阶段可本地裸跑。
+> 两个实例的凭证（`EDUCARE_INTERNAL_TOKEN` / `EDUCARE_ADMIN_TOKEN` / `EDUCARE_MCP_TOKEN`）为空时对应接口返回 503，须在 `docker compose up` 之前导出，见根目录 `RUNBOOK.md` §4.2。
 
 ### 2.4 启动宿主机 LLM 三件套
 
@@ -112,13 +109,14 @@ curl -sS -X POST http://localhost:8093/rerank \
 ### 2.5 初始化 Milvus 集合 + 写入种子知识
 
 ```bash
-docker compose -f docker/docker-compose.yml exec ai-inference-service \
-    python -m scripts.init_milvus
-docker compose -f docker/docker-compose.yml exec ai-inference-service \
-    python -m scripts.seed_knowledge
+# 建立/校验集合（已有集合只校验并加载）
+curl --fail -X POST -H "X-Admin-Token: $EDUCARE_ADMIN_TOKEN" http://127.0.0.1:8090/api/v1/rag/initialize
+# 导入已审阅的公开语料
+python3 scripts/public-rag-corpus.py check
+python3 scripts/public-rag-corpus.py apply --expected-sha256 <check 输出的摘要>
 ```
 
-> 输出含 "使用零向量降级" 即代表 8092 没接通，链路能跑但召回失真，必须修。
+> 旧的 `init_milvus` / `seed_knowledge` 脚本（含 12 条合成种子知识）已随 Python 服务删除，需要时从标签 `v0.9.0` 取。embedding 端点（8092）不可用时导入返回 503，不再有零向量降级。上述命令在删除后未实跑，待验证。
 
 ### 2.5.1 准备 PDF 导出字体（F-1，首次部署）
 
@@ -276,21 +274,32 @@ EDUCARE_SCHEDULE_ENABLED=true mvn -pl agent-service spring-boot:run
 ### 4.2 RAG 知识库重建
 
 知识库 / 向量字段任何变更后：
-```bash
-# 1) 删旧集合
-docker compose -f docker/docker-compose.yml exec ai-inference-service python -c "
-from pymilvus import connections, utility
-from app.core.config import settings
-connections.connect(host=settings.MILVUS_HOST, port=settings.MILVUS_PORT)
-for name in settings.MILVUS_COLLECTIONS.values():
-    if utility.has_collection(name):
-        utility.drop_collection(name)
-        print('dropped', name)
-"
-# 2) 重新初始化 + 写种子
-docker compose -f docker/docker-compose.yml exec ai-inference-service python -m scripts.init_milvus
-docker compose -f docker/docker-compose.yml exec ai-inference-service python -m scripts.seed_knowledge
-```
+Java knowledge-service 不提供删除集合的接口（初始化只校验已有集合，维度不匹配时拒绝）。重建步骤：
+
+1. §2.1 的基础设施命令不包含 Attu，先在仓库根目录启动它：
+
+   ```bash
+   docker compose -f docker/docker-compose.yml up -d attu
+   ```
+
+2. 在 Attu（`http://localhost:8000`）里手工删除旧集合；这一步不可恢复，先确认有语料来源可重灌。
+3. 清掉被删集合的导入幂等记录和检索结果缓存。导入接口按 `集合 + doc_id` 记录内容摘要（默认保留 7 天），摘要相同会直接返回 `skipped=true` 而不写向量；`/initialize` 不会清它，不做这一步重灌可能"成功"但集合是空的。只删下面两类键，不要整段删 `edu:rag:*`（里面还有写锁和集合修订号）：
+
+   ```bash
+   # 每个被删的集合各执行一次；键里用的是逻辑集合名，不是 Milvus 集合名：
+   #   case → edu_cases，psychology → edu_psychology，policy → edu_policies，success → edu_success
+   # 示例为 case；设置了 REDIS_PASSWORD 时给 redis-cli 加 -a
+   docker compose -f docker/docker-compose.yml exec redis sh -c \
+       "redis-cli --scan --pattern 'edu:rag:upsert:java:v1:case:*' | xargs -r redis-cli del"
+   # 检索结果缓存
+   docker compose -f docker/docker-compose.yml exec redis sh -c \
+       "redis-cli --scan --pattern 'edu:rag:java:v1:*' | xargs -r redis-cli del"
+   ```
+
+4. 调用 `POST /api/v1/rag/initialize` 重新建集合，再按 §2.5 导入语料。
+5. 验证：导入响应里 `skipped` 为 `false` 且 `chunks_written` 大于 0；在 Attu 里核对集合行数；再用 `POST /api/v1/rag/retrieve`（带 `X-Internal-Token`）或 MCP 的 search 工具实际检索到刚导入的文档。
+
+> 以上重建步骤是对照 `RagService` 的键名写的，未实跑，待验证。
 
 ### 4.3 缓存清理
 
@@ -302,11 +311,7 @@ docker exec edu-redis redis-cli --scan --pattern 'edu:rag:*' | xargs -r docker e
 
 ### 4.4 RAG 检索效果评估（E-2）
 
-```bash
-docker compose -f docker/docker-compose.yml exec ai-inference-service \
-    python -m scripts.eval_retrieval --output /tmp/rag_eval.md
-docker cp ai-inference-service:/tmp/rag_eval.md ./docs/educare/rag_eval_report.md
-```
+原评估脚本 `scripts.eval_retrieval` 属于已删除的 Python 服务，仓库内暂无 Java 版替代；需要复跑历史基线时从标签 `v0.9.0` 取。
 
 阈值参考：Recall@5 ≥ 0.85、MRR ≥ 0.70 视为可用。低于阈值时优先复查 embedding 服务、Milvus 索引参数。
 
@@ -382,6 +387,6 @@ docker exec edu-mysql sh -c 'mysqldump -uroot -proot edu_portrait' > backup_$(da
 
 - **更换 LLM 模型**：改 `LLM_MODEL` 与 `~/edu-ai/start-llm-server.sh` 的模型路径，无需改代码。
 - **更换 Embedding 模型**：必须同步更新 `EMBEDDING_DIM`（Milvus 集合 schema 也要重建）；走 §4.2 流程。
-- **新增 Milvus 集合**：在 `app/core/config.py::MILVUS_COLLECTIONS` 添加 → 重跑 `init_milvus`。
+- **新增 Milvus 集合**：集合名由 Java `knowledge-service` 的 `RagService` 从 `MILVUS_COLLECTION_*` 环境变量读取，新增集合需要改这里的代码与对应 MCP 工具 → 再调用 `/api/v1/rag/initialize`。
 - **Spring AI 升级**：1.0.0-M6 → 正式版后，仍在 `repo.spring.io/milestone` 拉则继续保留仓库声明；切到中央仓时移除即可。H-1.1.6（2026-05-20）已升到 **1.1.6 GA**（Maven Central），同步把 MCP server 传输从 SSE 切到 **Streamable HTTP**（`spring.ai.mcp.server.protocol=STREAMABLE`，单端点 `/mcp`）。1.0→1.1 主线 API 完全兼容。
-- **新增 MCP server**：Python 侧（H-1.3）落地后新增依赖 `fastmcp>=2.3,<3.0`，独立进程跑端口 8095，传输 Streamable HTTP 单端点 `/mcp`。环境变量可调 `MCP_KNOWLEDGE_RAG_PORT` / `MCP_KNOWLEDGE_RAG_PATH` / `MCP_KNOWLEDGE_RAG_HOST`；Milvus / embedding / reranker / Redis 沿用既有 `Settings`，零新增连接配置。
+- **新增 MCP server**（以下为 H-1.3 当时的 Python 实现记录，现由 Java knowledge-service 的 `KnowledgeTools` 提供）：Python 侧（H-1.3）落地后新增依赖 `fastmcp>=2.3,<3.0`，独立进程跑端口 8095，传输 Streamable HTTP 单端点 `/mcp`。环境变量可调 `MCP_KNOWLEDGE_RAG_PORT` / `MCP_KNOWLEDGE_RAG_PATH` / `MCP_KNOWLEDGE_RAG_HOST`；Milvus / embedding / reranker / Redis 沿用既有 `Settings`，零新增连接配置。

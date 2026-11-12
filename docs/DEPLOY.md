@@ -48,7 +48,7 @@ cd docker
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-首次会构建：gateway / agent-service / mcp-student-data（Spring Boot）、ai-inference / knowledge-rag（Python）、
+首次会构建：gateway / agent-service / mcp-student-data / ai-inference / knowledge-rag（均为 Spring Boot，后两者由 `knowledge-service` 构建）、
 frontend（Node 构建 Vue → nginx）。
 
 ## 三、数据库默认账号改密（全新库首次初始化后）

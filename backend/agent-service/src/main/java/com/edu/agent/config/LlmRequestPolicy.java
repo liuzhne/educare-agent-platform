@@ -36,7 +36,7 @@ public class LlmRequestPolicy implements ClientHttpRequestInterceptor {
     private StringRedisTemplate redis;
     @Value("${educare.llm.request-policy.shared-cooldown-enabled:true}")
     private boolean sharedCooldownEnabled = true;
-    // Redis TIME keeps Java/Python clocks consistent. This key contains no credentials or user identifiers.
+    // Redis TIME gives every instance the same clock. This key contains no credentials or user identifiers.
     private static final String COOLDOWN_KEY = "edu:llm:provider-cooldown";
     private static final DefaultRedisScript<Long> CLAIM = new DefaultRedisScript<>(
             "local t=redis.call('TIME'); local now=t[1]*1000+math.floor(t[2]/1000); "

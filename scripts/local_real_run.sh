@@ -3,7 +3,7 @@
 # 真 curl 触发一个任务，验证 ReAct 循环跑完 + final_answer 解析落库 + status=COMPLETED。
 #
 # 依赖：本机 redis + mysql（brew）+ 已 mvn package 的 agent-service jar + scripts/mock_llm_server.py。
-# 关掉 Nacos 注册与 MCP client（桩 LLM 直接给 final_answer，低风险短路，无需 MCP/Python）。
+# 关掉 Nacos 注册与 MCP client（桩 LLM 直接给 final_answer，低风险短路，无需 MCP/知识服务）。
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

@@ -1,5 +1,7 @@
 # EduCare 验收 Checklist
 
+> **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
+
 > 一份按阶段交付物组织的可执行核对清单。
 > 操作顺序：先按 §1 跑通环境 → 再按 §2 一阶段一阶段勾。
 

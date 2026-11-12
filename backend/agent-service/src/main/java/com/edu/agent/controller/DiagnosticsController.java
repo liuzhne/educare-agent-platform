@@ -13,7 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * G-1.6 Java：诊断端点，对称 Python 侧 `/api/v1/diagnostics/llm-metrics`。
+ * G-1.6：LLM 指标诊断端点。knowledge-service 的兼容入口 `/api/v1/diagnostics/llm-metrics` 读取的也是 agent-service 的指标。
  *
  * <p>Prometheus 端有 `/actuator/prometheus` 全量 exposition；这个 JSON 端点
  * 是给开发/运维做"快速人眼快照"用的（不依赖 Prom UI）。

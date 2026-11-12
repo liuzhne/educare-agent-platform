@@ -925,3 +925,4 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
   - 改部署名 `ai-inference-service`、Feign 客户端 `AiInferenceClient` 和环境变量 `AI_INFERENCE_URL`：牵涉 Compose、K3s 清单、Render 与线上配置，属于独立的重命名变更。
   - 逐条改写历史记录里指向已删文件的链接：历史条目保持原样，统一由本条说明去标签 `v0.9.0` 查。
 - 代价与约束：旧的 12 条合成种子知识随 `seed_knowledge.py` 一起离开工作区；生产镜像是否已切到 Java 未核实，不能据此声明线上 Python 已退役。
+- 补充（注释与文档清理）：现行文档和代码注释直接改成 Java 现状；设计稿、部署记录、执行计划等历史文档只在标题下加一条统一说明而不逐条改写，避免改动当时的决策依据。`McpClientConfig` 的强制 HTTP/1.1 保留不动，注释注明该限制源自旧 Python 服务端且迁移后未重新验证。
