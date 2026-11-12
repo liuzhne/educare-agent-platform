@@ -11,7 +11,7 @@
 
 - [ ] Docker 基础设施（mysql / redis / nacos / milvus / etcd / minio）`docker compose ps` 全 healthy
 - [ ] `agent_task` / `intervention_report` / `knowledge_citation` / `audit_log` 表存在  
-      `docker exec edu-mysql mysql -uroot -proot -e "SHOW TABLES IN edu_portrait" | grep -E 'agent_task|intervention_report|knowledge_citation|audit_log'`
+      `docker exec edu-portrait-mysql mysql -uroot -proot -e "SHOW TABLES IN edu_portrait" | grep -E 'agent_task|intervention_report|knowledge_citation|audit_log'`
 - [ ] Spring Boot 全 6 个服务（auth/user/student/mental/data/gateway）已注册到 Nacos
 - [ ] `ai-inference-service:8090/health` 可访问
 - [ ] 宿主 `localhost:8091/8092/8093` 全部监听（`lsof -iTCP:809{1,2,3} | grep LISTEN`）
@@ -112,7 +112,7 @@ docker compose -f docker/docker-compose.yml exec -T ai-inference-service \
 bash scripts/bench_agent.sh --n 10 --timeout 240
 
 # 数据校验
-docker exec edu-mysql mysql -uroot -proot -e "
+docker exec edu-portrait-mysql mysql -uroot -proot -e "
 SELECT status, COUNT(*) FROM edu_portrait.agent_task GROUP BY status;
 SELECT COUNT(*) FROM edu_portrait.intervention_report;
 SELECT COUNT(*) FROM edu_portrait.audit_log;"

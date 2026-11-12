@@ -36,7 +36,7 @@ docker compose -f docker/docker-compose.yml up -d \
 确认就绪：
 ```bash
 docker compose -f docker/docker-compose.yml ps
-docker exec edu-redis redis-cli ping       # PONG
+docker exec edu-portrait-redis redis-cli ping       # PONG
 curl http://localhost:8848/nacos           # 控制台
 curl http://localhost:9091/healthz         # Milvus
 ```
@@ -304,9 +304,10 @@ Java knowledge-service 不提供删除集合的接口（初始化只校验已有
 ### 4.3 缓存清理
 
 ```bash
-# 清 RAG / Embedding 缓存（保守，按前缀）
-docker exec edu-redis redis-cli --scan --pattern 'edu:emb:*' | xargs -r docker exec -i edu-redis redis-cli del
-docker exec edu-redis redis-cli --scan --pattern 'edu:rag:*' | xargs -r docker exec -i edu-redis redis-cli del
+# 清 Embedding 缓存与 RAG 检索结果缓存（按前缀）
+# 不要整段删 edu:rag:*：里面还有导入写锁、集合修订号和导入幂等摘要（摘要的清理见 §4.2）
+docker exec edu-portrait-redis redis-cli --scan --pattern 'edu:emb:*' | xargs -r docker exec -i edu-portrait-redis redis-cli del
+docker exec edu-portrait-redis redis-cli --scan --pattern 'edu:rag:java:v1:*' | xargs -r docker exec -i edu-portrait-redis redis-cli del
 ```
 
 ### 4.4 RAG 检索效果评估（E-2）
@@ -341,15 +342,15 @@ STUDENT_IDS="1,2,3,4,5" bash scripts/bench_agent.sh
 | PDF 中文显示为 `#` 且 err_msg 含 `_font is null` / `loadMetrics` NPE | 字体是 OpenType (CFF outlines)，PDFBox 2.0.24 的 subset 抛 `Subsetting of OTF based fonts is not supported`，但即便 `subset=false` 走 `PDCIDFontType0Embedder` 全嵌入，noto-cjk 的 SubsetOTF 在 2.0.24 下仍会静默失败 → 字体注册成 null → 渲染回退 Latin-only → 全是 # | **必须换 TrueType outlines（真 TTF）**。当前打包用 LXGW WenKai Lite（`https://github.com/lxgw/LxgwWenKai-Lite/releases/...LXGWWenKaiLite-Regular.ttf`），存为 `resources/fonts/NotoSansSC-Regular.ttf`（family 名沿用以免改 CSS）。`file` 命令应显示 `TrueType Font data` 而非 `OpenType font data`。换字体后 `mvn clean compile` 强刷 `target/classes` 再 `rm -rf /tmp/edu-exports/.fonts/` 清缓存 |
 | PDF 导出停在 PROCESSING | 渲染异常 / 进程被杀 | 查 `agent_export_task.err_msg`；重启 agent-service 后 PROCESSING 不会自动重置（MVP 限制），手动 `UPDATE agent_export_task SET status='FAILED' WHERE status='PROCESSING'` 或重新触发 |
 | SSE 状态条始终显示「轮询中」 | 后端订阅未启动 / Gateway 缓冲了 SSE / token 失败 | 启动日志搜 `F-2：订阅 Redis 通道`；浏览器 DevTools Network → `warning/stream` 确认 200 + `text/event-stream`；CLI 调试 `curl -N -H "Authorization: Bearer $TOKEN" http://localhost:8080/agent/api/v1/warning/stream` |
-| SSE 收不到事件但轮询正常 | Redis Pub/Sub 没起作用 | `docker exec edu-redis redis-cli SUBSCRIBE edu:agent:warning:new` 与触发分析并行观察；若 CLI 收得到而前端收不到 → 看 agent-service 日志「F-2：分发事件」 |
+| SSE 收不到事件但轮询正常 | Redis Pub/Sub 没起作用 | `docker exec edu-portrait-redis redis-cli SUBSCRIBE edu:agent:warning:new` 与触发分析并行观察；若 CLI 收得到而前端收不到 → 看 agent-service 日志「F-2：分发事件」 |
 | 任务 RISK_ANALYZING 阶段秒级失败、画像里只剩 `studentId` | 下游 student/mental/data 全挂；Feign FallbackFactory 接管返回降级数据 | agent-service 日志搜 `[fallback]`，找出哪个下游真实异常并修复；若需排查 fallback 是否被加载，临时改 `spring.cloud.openfeign.circuitbreaker.enabled=false`，异常会直接抛栈帧 |
 | 容器内 Redis 命中率 0 | Redis 未连接 | `docker logs ai-inference-service` 搜 "redis"；检查 `REDIS_HOST` |
 | 定时扫描没触发 | `educare.schedule.enabled=false` 或锁未释放 | Nacos 改 true；检查 `edu:agent:schedule:daily-scan` 是否残留 |
 
 释放残留锁（极端情况）：
 ```bash
-docker exec edu-redis redis-cli del edu:agent:schedule:daily-scan
-docker exec edu-redis redis-cli --scan --pattern 'agent:task:lock:*' | xargs -r docker exec -i edu-redis redis-cli del
+docker exec edu-portrait-redis redis-cli del edu:agent:schedule:daily-scan
+docker exec edu-portrait-redis redis-cli --scan --pattern 'agent:task:lock:*' | xargs -r docker exec -i edu-portrait-redis redis-cli del
 ```
 
 ---
@@ -369,14 +370,15 @@ docker compose -f docker/docker-compose.yml stop                # 全量
 
 | 卷 | 容器 | 内容 |
 |---|---|---|
-| `edu-mysql-data` | mysql | 业务数据库 |
-| `edu-milvus-data` | milvus-standalone | 向量索引 |
-| `edu-minio-data` | minio | Milvus 对象存储 |
-| `edu-redis-data` | redis | （未启用持久化默认 inmem） |
+| 命名卷 `mysql_data` | mysql | 业务数据库 |
+| 目录 `docker/milvus/milvus` | milvus-standalone | 向量索引 |
+| 目录 `docker/milvus/minio` | minio | Milvus 对象存储 |
+| 目录 `docker/milvus/etcd` | etcd | Milvus 元数据 |
+| 命名卷 `redis_data` | redis | 缓存与会话（挂载在 `/data`） |
 
 ```bash
 # MySQL 逻辑备份
-docker exec edu-mysql sh -c 'mysqldump -uroot -proot edu_portrait' > backup_$(date +%F).sql
+docker exec edu-portrait-mysql sh -c 'mysqldump -uroot -proot edu_portrait' > backup_$(date +%F).sql
 ```
 
 `docker-compose down -v` 会**抹掉**卷，数据库 / 向量库都会清空 — 仅在重置环境时执行。
