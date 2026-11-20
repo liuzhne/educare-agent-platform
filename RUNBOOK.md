@@ -37,7 +37,8 @@ dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)
     - 加锁与取代检查（`flock` 用 Python `fcntl.flock` 替身）：
       - 并行暂存时，后一次在建目录前就中止；
       - A 同步后失败、B 正常完成后，对 A 补跑被拒绝，对 B 补跑成功；
-      - `CURRENT` 记录的发布比要补跑的目录新时，拒绝补跑；
+      - 同一秒内暂存（用 `date` 替身固定时间戳）：A 名为 `z`、同步后失败，B 名为 `a`、正常完成。按名称排序 A 更"新"，但 `LATEST`=B，对 A 补跑被拒绝，对 B 补跑成功；
+      - 没有 `LATEST` 记录时拒绝补跑；持锁期间补跑被拒绝；
       - `CURRENT` 只在暂存成功后写入。
   - 发布前迁移检查（本地实测 `check-release.sh`）：
     - 截断的包：exit=1，报"无法完整读取包"；
@@ -46,7 +47,7 @@ dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)
     - main（`18c33e7`）新打的包：exit=0，输出"迁移齐全"。
   - `rsync` 本身中断的情形没有模拟。
   - 在 GCP VM 上实跑：待验证。
-- `--resume` 只允许补跑最新一次暂存，并且不能早于 `RELS/CURRENT` 记录的已完成发布；整个暂存过程持有 `flock` 锁。
+- `--resume` 只允许补跑与 `RELS/LATEST` 一致的目录：`LATEST` 在持锁期间、`rsync` 之前原子写入，不依赖时间戳排序。整个暂存过程持有 `flock` 锁；`RELS/CURRENT` 记录最近一次完整完成的发布。
 - 发布前迁移检查：用手册 §5 第 1 步的 `check-release.sh`，退出码非 0 就停止发布，不执行 `apply-private`。脚本以 `set -euo pipefail` 执行，以下任一情况都会失败：
   - 发布提交不含 `18c33e7`；
   - `tar` 无法完整读取包，例如包被截断（单独检查 `tar` 的退出码，不经管道传给 `diff`）；

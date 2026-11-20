@@ -224,12 +224,10 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    if [ "${1:-}" = "--resume" ]; then
      REL=$(realpath -e "${2:?用法：--resume <release目录>}")
      case "$REL" in "$RELS"/?*) ;; *) echo "$REL 不在 $RELS 下，中止" >&2; exit 1 ;; esac
-     # 只允许补跑最新一次暂存；目录名以 UTC 时间戳开头，按名称排序即按时间排序
-     LATEST=$(find "$RELS" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)
-     [ "$REL" = "$LATEST" ] || { echo "$REL 已被更新的 $LATEST 取代，拒绝补跑" >&2; exit 1; }
-     if [ -f "$RELS/CURRENT" ] && [[ "$(cat "$RELS/CURRENT")" > "$REL" ]]; then
-       echo "CURRENT 记录的已完成发布比 $REL 新，拒绝补跑" >&2; exit 1
-     fi
+     # 只允许补跑最近一次开始同步的暂存：以持锁写入的 LATEST 记录为准，不依赖时间戳或名称排序
+     LATEST=$(cat "$RELS/LATEST" 2>/dev/null || true)
+     [ -n "$LATEST" ] && [ "$REL" = "$LATEST" ] || {
+       echo "$REL 不是最近一次开始同步的暂存（LATEST=${LATEST:-无}），拒绝补跑" >&2; exit 1; }
    else
      PKG=${1:?缺少包路径} SHA=${2:?缺少期望 SHA-256} NAME=${3:?缺少 release 名}
      ACTUAL=$(sha256sum "$PKG" | cut -d' ' -f1)
@@ -243,6 +241,8 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
             docker/docker-compose.cloud.yml sql/init/01_init.sql backend/pom.xml frontend/package.json; do
      [ -s "$REL/$f" ] || { echo "$REL 缺少 $f，中止，未同步" >&2; exit 1; }
    done
+   # 持锁期间、rsync 之前原子记录本次暂存；此后对其他目录的 --resume 都会被拒绝
+   echo "$REL" > "$RELS/LATEST.tmp" && mv "$RELS/LATEST.tmp" "$RELS/LATEST"
    rsync -a --delete \
      --exclude=/docker/.env.kamatera --exclude=/.local-run/ --exclude=/.git/ --exclude='/*.tar.gz' \
      "$REL"/ "$ROOT"/
@@ -259,11 +259,10 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    - **同步前失败**（SHA 不匹配、release 目录已存在、解压失败、缺关键文件）：`/opt/resource-profile` 没有被改动。修正后用新的 release 名重跑脚本即可。
    - **`rsync` 本身中断**：目标目录可能只同步了一部分。修复原因后，用脚本输出的 `release 目录：…` 路径补跑：`bash /root/stage-release.sh --resume <release目录>`。`$REL` 只存在于脚本内部，不要在交互 shell 里手工重跑 `rsync`。`--resume` 会先确认以下几点，再从 `rsync` 开始执行：
      - 目录位于 `/opt/resource-profile-releases` 下；
-     - 它是最新一次暂存，没有被之后新建的 release 取代；
-     - 它不早于 `CURRENT` 记录的已完成发布；
+     - 它与 `LATEST` 记录完全一致，也就是最近一次开始同步的暂存。`LATEST` 在持锁期间、`rsync` 之前原子写入，因此即使两次暂存发生在同一秒、名称排序相反，较早的那次也无法再补跑；
      - 关键文件齐全。
 
-     脚本全程持有 `flock` 锁，两次暂存不会并行；`CURRENT` 只在暂存全部成功后才写入。
+     脚本全程持有 `flock` 锁，两次暂存不会并行。`CURRENT` 只在暂存全部成功后才写入，用来记录最近一次完整完成的发布。
    - **同步后失败**（`chmod` 或 `restorecon` 失败）：源码已经更新为新版本，但 `sql/init` 的权限或 SELinux 标签可能不对。修复原因后同样用 `--resume` 补跑，再用 `ls -Zd /opt/resource-profile/sql/init /opt/resource-profile/sql/init/*.sql` 确认标签为 `container_file_t:s0`。`k3s-deploy.py` 的 `apply-private` / `publish` 遇到标签错误也会拒绝继续。
 
 3. 只构建受影响服务（服务名同 `docker/docker-compose.cloud.yml`）：
