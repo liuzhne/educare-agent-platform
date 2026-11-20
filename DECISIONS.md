@@ -1,6 +1,6 @@
 # Resource-Profile 架构与工程决策
 
-> 最近更新：2026-10-11
+> 最近更新：2026-11-20
 > 记录范围：当前仍有效的项目级决策。历史阶段细节见 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) §6。
 
 每条记录包含背景、选择、放弃方案和后果。被替换的决策不得直接删除，应改为“已取代”并链接新决策。
@@ -926,3 +926,47 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
   - 逐条改写历史记录里指向已删文件的链接：历史条目保持原样，统一由本条说明去标签 `v0.9.0` 查。
 - 代价与约束：旧的 12 条合成种子知识随 `seed_knowledge.py` 一起离开工作区；生产镜像是否已切到 Java 未核实，不能据此声明线上 Python 已退役。
 - 补充（注释与文档清理）：现行文档和代码注释直接改成 Java 现状；设计稿、部署记录、执行计划等历史文档只在标题下加一条统一说明而不逐条改写，避免改动当时的决策依据。`McpClientConfig` 的强制 HTTP/1.1 保留不动，注释注明该限制源自旧 Python 服务端且迁移后未重新验证。
+
+## GCP-DEPLOY-20261120：生产从 Kamatera 迁到 GCP 单节点 K3s（2026-11-20）
+
+- 背景：Kamatera 试用 VM `resource-profile-sg` 欠费停用，线上不可用，VM 上的数据和私有配置已不受控。需要在用户的 GCP 账号下尽快恢复服务。
+- 选择：
+  - 新建专用项目 `educare-prod-2026`，不复用已有的 `cs-project-kvujvpln`（nonprod）。专用项目可以整体删除来停止全部计费，能单独设预算，权限也和其他项目隔离。结算账号最多关联 3 个项目，为此解绑了空项目 My First Project。
+  - 单台 GCE VM（`e2-highmem-4`，4 vCPU / 32 GB，100 GB pd-balanced，新加坡，约 US$178/月）+ 单节点 K3s，原样复用已在 Kamatera 验证过的 `k3s-deploy.py` 门禁、清单和 Rocky/SELinux 前提。32 GB 给全栈 limits 17.75 GiB 加 K3s 和镜像构建峰值留出余量。
+  - 9 个内部密钥和三个种子账号密码全部重新生成，数据库从空库初始化；Groq / Cloudflare / Langfuse 参数沿用。部署代码为 main `3725dd6`，不含工作区未提交改动。
+  - SSH 只走 IAP，删除默认的全网 22/3389 规则；公网只开放 80/443。
+- 放弃方案：
+  - 单 VM + Docker Compose：步骤更少，但没有 HPA 和 K3s 发布门，也偏离已验证的路径。
+  - Cloud Run + Cloud SQL / Memorystore / 托管向量库：要拆掉自建的 MySQL、Redis、Milvus，改服务间寻址和鉴权，按托管计费也明显更贵，不适合紧急恢复。
+  - 4 vCPU / 16 GB 或 24 GB 自定义机型（约 US$100–150/月）：前者要下调各服务内存 limits，有 OOM 风险；后者余量偏紧。
+  - 复用 Kamatera 的内部密钥：那台 VM 已不受控，复用等于继续信任旧凭据。
+- 代价与约束：
+  - 费用约为 Kamatera 的两倍，且 E2 没有持续使用折扣。停止 VM 后磁盘和静态 IP 仍计费。
+  - 单节点，没有跨主机高可用；nip.io 只适合演示。
+  - 供应商 key 沿用 Kamatera 时期的值，需要轮换；预算提醒未设置。
+  - RAG 灌库、真实 AgentLoop、PDF、SSE、HPA 扩缩容和备份恢复在 GCP 上均待验证。
+  - 重建时使用新预留的地址，不沿用 `34.87.79.229`：静态外部 IP 只属于预留它的项目和区域，删除后无法指定取回同一个值。在新项目里或重新预留后，再写死旧地址会让 `instances create --address` 失败，或者让 `CLOUD_PUBLIC_IP` / nip.io 域名与 VM 不一致，导致 `publish` 的 DNS 门禁拒绝发布。因此手册改为每次读取 `educare-ip` 的实际值，再统一填到 VM、env 和域名三处。代价是重建后站点域名会变（nip.io 域名由 IP 决定），需要通知使用方；换成自有域名后，只需更新 A 记录。
+  - 更新发布时源码暂存：最初的手册写的是把新包直接解压覆盖到 `/opt/resource-profile`。覆盖解压会留下新提交已删除的文件，而后端 Dockerfile 用 `COPY . .`，残留的旧源码会进入镜像或造成重复类编译失败。现在改为 `stage-release.sh` 脚本，按顺序执行：
+    1. 显式比对 SHA-256；
+    2. 解压到按时间戳新建的空 release 目录，目录已存在就失败；
+    3. 检查关键文件齐全；
+    4. 最后 `rsync --delete` 同步，并排除 env、`.local-run`、`.git` 和源码包。
+
+    脚本用 `set -euo pipefail` 执行，`rsync` 之前的任何一步失败都会中止，目标目录不受影响，因为 `rsync --delete` 会删除现有源码。`rsync` 之后的 `chmod` / `restorecon` 失败时，源码已经更新，只能补跑剩余步骤，不能当作"没有改动"。这些命令都单独成行，不写在 `&&` 列表里：`&&` 列表中非最后一条命令失败时，`set -e` 不会中止脚本。SHA 改为显式比较，不依赖 `sha256sum -c`：本地模拟发现 macOS 版本遇到格式不对的校验行时不返回失败。放弃的方案：
+    - 覆盖解压后手工删除旧文件：依赖人工比对，容易漏。
+    - 直接从 release 目录构建和部署：SELinux 的 fcontext 规则和 K3s hostPath 都绑定在 `/opt/resource-profile` 的固定路径上，每次换目录都要重新打标签、改配置。
+    - 在 VM 上 `git pull`：VM 上没有仓库和凭据，而 `package-source` 白名单本身就是防止私有文件进镜像的边界。
+
+    代价：需要先安装 rsync；release 目录会越积越多，要人工清理；`rsync` 本身中途中断，或同步后 `chmod` / `restorecon` 失败时，目标目录已经改变，需要用 `stage-release.sh --resume <release目录>` 补跑。补跑做成脚本模式，而不是让运维手工重跑 `rsync`，因为 `$REL`、`$ROOT` 只存在于脚本进程里，交互 shell 中可能为空或沿用旧值；`--resume` 只接受 release 根目录下的路径，并会重新检查关键文件。此外：
+    - 整个暂存过程持有 `flock` 锁，避免两次暂存交错执行；
+    - 只允许补跑与 `LATEST` 记录一致的目录。`LATEST` 在持锁期间、`rsync` 之前原子写入，防止用旧 release 覆盖已经开始同步的新版本；
+    - `CURRENT` 只在暂存全部成功后原子写入，记录最近一次完整完成的发布。
+
+    最初的做法是按目录名（UTC 时间戳 + release 名）排序找出"最新"目录，再与 `CURRENT` 比较。这种做法在同一秒内两次暂存、而 release 名排序相反时会判错，所以已经放弃。
+
+    放弃的方案是只靠操作员自己判断哪个目录可以补跑：发布之间间隔久了，容易拿错目录。
+  - 新迁移先于服务重建执行：单服务更新时，`rollout status` 会在迁移执行前就等待新 Pod 就绪，依赖新列的版本会卡在启动阶段。因此规定先执行 `apply-sql-migrations.py`，并且迁移只做加法，保证旧版本 Pod 在迁移后仍能运行。放弃的方案是"先重建、再迁移"，它依赖新代码能容忍缺失的列。
+  - MySQL 密码轮换按账号执行：`MYSQL_ROOT_PASSWORD` 和 `MYSQL_PASSWORD` 只在 PVC 首次初始化时写入。只改 env，健康检查或业务连库就会失败，而 frontend 此时已被下线。因此规定先备份，再在库内对 `root@%`、`root@localhost`、`edu@%` 分别执行 `ALTER USER`，最后改 env 并部署。放弃的方案是"删 PVC 重新初始化"，它会丢失数据。
+
+    `ALTER USER` 之前先执行 `stop-public`：从改密到 `apply-private` 完成这段时间，业务 Pod 新建的连接会认证失败，先下线公网入口，可以避免用户请求在这段时间里报错。登录验证统一放在 `publish` 之后，因为 `apply-private` 会删除 frontend，发布前没有公网入口可以验证；验证失败时立即 `stop-public`。
+  - 本次识别出 `package-source` 迁移白名单只包含 `20261007_*`（见 ARCHITECTURE 同名条目）。修复方案是把白名单放宽为通用的 `<日期>_<序号>_<名称>.sql` 模式，保留现有的私有文件排除规则，并补回归测试。已由 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）实施。打包后的检查改为硬门槛，任一项失败就停止发布：发布提交必须包含 `18c33e7`（`git merge-base --is-ancestor`），并且包内 `sql/migrations/` 的文件列表必须与提交中的完全一致。检查写成 `set -euo pipefail` 的 `check-release.sh`，单独判断 `tar` 的退出码，任一项失败都以非零退出码结束。放弃的写法是 `diff <(…) <(tar … | grep …) || echo`：`tar` 的失败状态不会传给 `diff`，截断的包也可能被判为"迁移齐全"，而且 `|| echo` 本身返回 0。

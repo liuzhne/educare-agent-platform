@@ -1,7 +1,59 @@
 # Resource-Profile 运行手册
 
-> 最近更新：2026-10-11
+> 最近更新：2026-11-20
 > 适用范围：当前仓库的开发、测试、排错和发布准备。真实 AI/生产签字状态以 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) R-5/R-6 为准。
+
+## GCP-DEPLOY-20261120：生产迁到 GCP（2026-11-20）
+
+Kamatera 欠费停用后，生产迁到 GCP 项目 `educare-prod-2026`：新加坡单台 `e2-highmem-4` VM `educare-sg`，K3s 单节点，站点 `https://educare.34-87-79-229.nip.io`，SSH 只走 IAP。部署代码为 main `3725dd6`，内部密钥和种子密码全部重新生成，数据库从空库初始化。17 个工作负载 Ready；受信 HTTPS、三角色鉴权、退出撤销和公网端口边界已验证；RAG 灌库、真实 AgentLoop、PDF、SSE、HPA 尚未验收。资源、费用、访问、更新发布、回滚与销毁步骤见 [GCP 部署手册](./docs/deployment/GCP_DEPLOYMENT.md)。下文涉及 Kamatera VM、`45.130.165.168` 的条目均为历史记录。
+
+已知缺陷（已修复）：旧版 `package-source` 只打包 `sql/migrations/20261007_*.sql`（[`scripts/cloud_deploy.py`](./scripts/cloud_deploy.py)），之后的迁移会被静默排除。
+- 复现（旧版）：打包后执行 `tar -tzf <包> | grep '^sql/migrations/'`，结果里没有 `20261011_01_agent_diagnostics.sql`。
+- 修复：[#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）改为打包所有 `<8位日期>_<2位序号>_<小写名>.sql`，并补了回归测试；该 PR 报告两个部署测试脚本通过，`tar -tzf` 确认包内含 `20261011_01_agent_diagnostics.sql`。
+- 当前线上：部署用的是修复前的 `3725dd6`，但全新库已由 `sql/init/10_agent_diagnostics.sql` 建好同等结构，`agent_task` 的四个诊断列经核对存在。
+- 待验证：下次在 GCP 上用包含 `18c33e7` 的提交发布时，`apply-private` 输出 `Applied: 20261011_01_agent_diagnostics.sql`（该迁移是幂等的）。
+
+地址一致性核对（重建或更换 IP 后必做；2026-11-20 实测四项均为 `34.87.79.229`，通过）：
+
+```bash
+gcloud compute addresses describe educare-ip --region=asia-southeast1 --format='value(address)'
+gcloud compute instances describe educare-sg --zone=asia-southeast1-b --format='value(networkInterfaces[0].accessConfigs[0].natIP)'
+grep -E '^CLOUD_(PUBLIC_IP|SITE_ADDRESS)=' docker/.env.kamatera   # 只含非密钥字段
+dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)"
+```
+
+通过判据：预留地址、VM 外网 IP、`CLOUD_PUBLIC_IP`、站点域名的解析结果四者相同。不一致时，以 `educare-ip` 的实际值为准，修正 env 和域名后重新 `publish`；VM 绑定的不是该地址时，先停机再改绑。
+
+运维注意（详见手册 §5）：
+- 更新源码时用手册 §5 的 `stage-release.sh`，不要覆盖解压。脚本会显式比对 SHA-256，解压到新建的空 release 目录，检查关键文件，最后 `rsync --delete` 同步，再设置 `sql/init` 的权限和 SELinux 标签。只有输出最后一行 `staged …` 才算完成。
+  - 同步前失败：目标目录不变，可以直接重跑。
+  - `rsync` 中断或同步后的 `chmod` / `restorecon` 失败：目标目录已经改变。用脚本输出的 release 目录执行 `bash /root/stage-release.sh --resume <release目录>` 补跑，再用 `ls -Z` 核对标签。不要在交互 shell 里手工重跑 `rsync`，因为 `$REL` 只存在于脚本内部。
+  - 本地已模拟验证（macOS，`/opt` 路径替换为临时目录，`restorecon` 替换为 `true` 或 `false`）：
+    - SHA 不对、包损坏：退出码非 0，目标目录不变；
+    - 包正常：残留文件被删除，`.local-run` 保留；
+    - 同步后 `chmod` 失败、`restorecon` 失败：退出码 1，不输出 `staged`；
+    - `--resume` 补跑成功；
+    - `--resume` 指向 release 根目录之外的路径时拒绝执行；
+    - 加锁与取代检查（`flock` 用 Python `fcntl.flock` 替身）：
+      - 并行暂存时，后一次在建目录前就中止；
+      - A 同步后失败、B 正常完成后，对 A 补跑被拒绝，对 B 补跑成功；
+      - 同一秒内暂存（用 `date` 替身固定时间戳）：A 名为 `z`、同步后失败，B 名为 `a`、正常完成。按名称排序 A 更"新"，但 `LATEST`=B，对 A 补跑被拒绝，对 B 补跑成功；
+      - 没有 `LATEST` 记录时拒绝补跑；持锁期间补跑被拒绝；
+      - `CURRENT` 只在暂存成功后写入。
+  - 发布前迁移检查（本地实测 `check-release.sh`）：
+    - 截断的包：exit=1，报"无法完整读取包"；
+    - `3725dd6`：exit=1，报"不含迁移白名单修复"；
+    - 缺少 `20261011` 的旧包配 main：exit=1，报"迁移不一致"；
+    - main（`18c33e7`）新打的包：exit=0，输出"迁移齐全"。
+  - `rsync` 本身中断的情形没有模拟。
+  - 在 GCP VM 上实跑：待验证。
+- `--resume` 只允许补跑与 `RELS/LATEST` 一致的目录：`LATEST` 在持锁期间、`rsync` 之前原子写入，不依赖时间戳排序。整个暂存过程持有 `flock` 锁；`RELS/CURRENT` 记录最近一次完整完成的发布。
+- 发布前迁移检查：用手册 §5 第 1 步的 `check-release.sh`，退出码非 0 就停止发布，不执行 `apply-private`。脚本以 `set -euo pipefail` 执行，以下任一情况都会失败：
+  - 发布提交不含 `18c33e7`；
+  - `tar` 无法完整读取包，例如包被截断（单独检查 `tar` 的退出码，不经管道传给 `diff`）；
+  - 提交中 `sql/migrations/` 的文件列表与包内的不一致，目前应包含 `20261011_01_agent_diagnostics.sql`。
+- 有新迁移时，先执行迁移，再重建服务。
+- 轮换 MySQL 密码的顺序：备份 → 核对账号 → `stop-public` → 库内对 `root@%`、`root@localhost`、`edu@%` 执行 `ALTER USER` → 改 env 并 `apply-private` → `publish` 后验证登录，失败就 `stop-public`。只改 env 会导致 MySQL 或业务服务卡在未就绪状态。
 
 ## FIELD-CONTRACT-AUDIT-20261007：页面、接口与数据库契约审计（2026-10-07）
 

@@ -1,6 +1,6 @@
 # Resource-Profile 架构说明
 
-> 最近更新：2026-10-15
+> 最近更新：2026-11-20
 > 状态：按当前仓库实现初始化；真实模型与生产全栈仍待 `docs/educare/EXECUTION_PLAN.md` 的 R-5/R-6 验收。
 
 本文说明项目级模块边界、核心调用链与数据流。EduCare 的历史计划与原子任务状态以 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) 为准；本文只描述当前仍在代码中的能力。
@@ -635,3 +635,20 @@ agent-service 内部新增抽象层：`AgentTaskServiceImpl → AgentRunner（�
 无运行时架构影响。删除已退役的 `ai-inference-service/` 旧 Python 源码目录；运行时边界自 JAVA-AI-MIGRATION-20261015 起即为 Java [knowledge-service](./backend/knowledge-service)（8090 RAG/导入、8095 knowledge-rag MCP）与 agent-service，部署名 `ai-inference-service` 保留。本文更早条目中指向 `ai-inference-service/...` 的链接为历史记录，文件见标签 `v0.9.0`。仓库内剩余的 Python 只有 `scripts/`、`eval/` 的运维与评测工具，不属于运行服务。
 
 2026-11-10 补充：注释与文档清理无架构影响；§5、§6 中描述 Python 运行形态的现行条目已改为 Java knowledge-service，带日期标识的历史条目保持原样。
+
+## 维护记录：GCP-DEPLOY-20261120（2026-11-20）
+
+无应用架构影响：模块边界、服务间调用链、数据流与鉴权边界（JWT + Redis 会话、`X-Internal-Token`、字段权限、双 MCP token）均不变。变化仅在部署平台：Kamatera 欠费停用后，生产由单节点 K3s 原样迁到 GCP 项目 `educare-prod-2026` 的单台 VM `educare-sg`（asia-southeast1，`e2-highmem-4`，Rocky Linux 9.8，SELinux Enforcing），仍由 [`k8s/workloads.json`](./k8s/workloads.json) 与 [`scripts/k3s-deploy.py`](./scripts/k3s-deploy.py) 生成清单，17 个工作负载、仅 frontend 以 hostPort 80/443 对外。
+
+网络边界新增一层：GCP VPC 防火墙只放行公网 TCP 80/443 和 IAP 网段（35.235.240.0/20）的 TCP 22，K3s API 6443、kubelet 10250、flannel 8472 与全部数据库/服务端口在 VPC 层即不可达；VM 内 firewalld 仍保留，Pod/Service CIDR 加入 trusted 区。运维 SSH 只走 IAP 隧道，主机公钥由 guest attributes 提供。
+
+部署工具缺陷（本次识别，已由 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36) / main `18c33e7` 修复，白名单改为匹配所有日期的迁移）：`scripts/cloud_deploy.py` 的 `package-source` 迁移白名单只匹配 `sql/migrations/20261007_*.sql`，`20261011_01_agent_diagnostics.sql` 及之后的迁移会被静默排除，已有数据库升级时不会执行。本次是全新库，等价结构由 `sql/init/10_agent_diagnostics.sql` 建好，线上已核对 `agent_task` 四个诊断列存在。资源、访问与运维步骤见 [GCP 部署手册](./docs/deployment/GCP_DEPLOYMENT.md)，取舍见 DECISIONS 同名条目。
+
+重建步骤修正（无应用架构影响）：手册 §4.1 不再写死 `34.87.79.229`，改为读取静态地址 `educare-ip` 实际分配到的值，VM、`CLOUD_PUBLIC_IP` 与站点域名都用这个值。只影响重建操作；公网入口仍然只有 frontend 的 80/443，`k3s-deploy.py publish` 的 DNS→`CLOUD_PUBLIC_IP` 门禁不变。
+
+更新发布流程修正（无应用架构影响，见手册 §5）：
+- 源码改为由 `stage-release.sh` 先解压到新建的 release 目录，校验通过后再 `rsync --delete` 同步；同步前失败不改动目标目录，同步后失败用 `--resume` 补跑（加 `flock` 锁，只允许补跑持锁记录的 `LATEST` 暂存）；发布前的硬检查要求发布提交包含 `18c33e7`，并且包内迁移齐全；
+- 新迁移先于服务重建执行；
+- MySQL 密码按 `user@host` 账号轮换。
+
+只涉及 VM 上的运维步骤，镜像构建输入、清单与运行时边界都不变。
