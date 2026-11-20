@@ -13,6 +13,17 @@ Kamatera 欠费停用后，生产迁到 GCP 项目 `educare-prod-2026`：新加�
 - 修复前：在已有数据库上发布任何新迁移，都要先改白名单，并人工核对包内迁移列表。
 - 修复后待验证：包内包含全部迁移；`apply-private` 输出 `Applied: <新迁移>`。
 
+地址一致性核对（重建或更换 IP 后必做；2026-11-20 实测四项均为 `34.87.79.229`，通过）：
+
+```bash
+gcloud compute addresses describe educare-ip --region=asia-southeast1 --format='value(address)'
+gcloud compute instances describe educare-sg --zone=asia-southeast1-b --format='value(networkInterfaces[0].accessConfigs[0].natIP)'
+grep -E '^CLOUD_(PUBLIC_IP|SITE_ADDRESS)=' docker/.env.kamatera   # 只含非密钥字段
+dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)"
+```
+
+通过判据：预留地址、VM 外网 IP、`CLOUD_PUBLIC_IP`、站点域名的解析结果四者相同。不一致时，以 `educare-ip` 的实际值为准，修正 env 和域名后重新 `publish`；VM 绑定的不是该地址时，先停机再改绑。
+
 运维注意（详见手册 §5）：
 - 更新源码时解压到新建的空 release 目录，再用 `rsync --delete` 同步；不要覆盖解压。
 - 有新迁移时，先执行迁移，再重建服务。

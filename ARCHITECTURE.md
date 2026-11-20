@@ -643,3 +643,5 @@ agent-service 内部新增抽象层：`AgentTaskServiceImpl → AgentRunner（�
 网络边界新增一层：GCP VPC 防火墙只放行公网 TCP 80/443 和 IAP 网段（35.235.240.0/20）的 TCP 22，K3s API 6443、kubelet 10250、flannel 8472 与全部数据库/服务端口在 VPC 层即不可达；VM 内 firewalld 仍保留，Pod/Service CIDR 加入 trusted 区。运维 SSH 只走 IAP 隧道，主机公钥由 guest attributes 提供。
 
 部署工具缺陷（本次识别、未修复）：`scripts/cloud_deploy.py` 的 `package-source` 迁移白名单只匹配 `sql/migrations/20261007_*.sql`，`20261011_01_agent_diagnostics.sql` 及之后的迁移会被静默排除，已有数据库升级时不会执行。本次是全新库，等价结构由 `sql/init/10_agent_diagnostics.sql` 建好，线上已核对 `agent_task` 四个诊断列存在。修复另开 PR。资源、访问与运维步骤见 [GCP 部署手册](./docs/deployment/GCP_DEPLOYMENT.md)，取舍见 DECISIONS 同名条目。
+
+重建步骤修正（无应用架构影响）：手册 §4.1 不再写死 `34.87.79.229`，改为读取静态地址 `educare-ip` 实际分配到的值，VM、`CLOUD_PUBLIC_IP` 与站点域名都用这个值。只影响重建操作；公网入口仍然只有 frontend 的 80/443，`k3s-deploy.py publish` 的 DNS→`CLOUD_PUBLIC_IP` 门禁不变。
