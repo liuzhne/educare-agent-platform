@@ -33,11 +33,21 @@ dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)
     - 包正常：残留文件被删除，`.local-run` 保留；
     - 同步后 `chmod` 失败、`restorecon` 失败：退出码 1，不输出 `staged`；
     - `--resume` 补跑成功；
-    - `--resume` 指向 release 根目录之外的路径时拒绝执行。
+    - `--resume` 指向 release 根目录之外的路径时拒绝执行；
+    - 加锁与取代检查（`flock` 用 Python `fcntl.flock` 替身）：
+      - 并行暂存时，后一次在建目录前就中止；
+      - A 同步后失败、B 正常完成后，对 A 补跑被拒绝，对 B 补跑成功；
+      - `CURRENT` 记录的发布比要补跑的目录新时，拒绝补跑；
+      - `CURRENT` 只在暂存成功后写入。
+  - 发布前迁移检查（本地实测）：`3725dd6` 与当时的包两项都报失败，缺少 `20261011_01_agent_diagnostics.sql`；`origin/main`（`18c33e7`）新打的包输出"迁移齐全"。
   - `rsync` 本身中断的情形没有模拟。
   - 在 GCP VM 上实跑：待验证。
+- `--resume` 只允许补跑最新一次暂存，并且不能早于 `RELS/CURRENT` 记录的已完成发布；整个暂存过程持有 `flock` 锁。
+- 发布前迁移检查（硬门槛，任一项失败都停止发布，不执行 `apply-private`）：
+  - `git merge-base --is-ancestor 18c33e7 <发布提交>` 成功；
+  - 提交中 `sql/migrations/` 的文件列表与 `tar -tzf <包>` 中的完全一致（命令见手册 §5 第 1 步），目前应包含 `20261011_01_agent_diagnostics.sql`。
 - 有新迁移时，先执行迁移，再重建服务。
-- 轮换 MySQL 密码时，先在库内对 `root@%`、`root@localhost`、`edu@%` 执行 `ALTER USER`，再改 env；只改 env 会导致 MySQL 或业务服务卡在未就绪状态。
+- 轮换 MySQL 密码的顺序：备份 → 核对账号 → `stop-public` → 库内对 `root@%`、`root@localhost`、`edu@%` 执行 `ALTER USER` → 改 env 并 `apply-private` → `publish` 后验证登录，失败就 `stop-public`。只改 env 会导致 MySQL 或业务服务卡在未就绪状态。
 
 ## FIELD-CONTRACT-AUDIT-20261007：页面、接口与数据库契约审计（2026-10-07）
 

@@ -184,7 +184,16 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 
 镜像使用 `latest` 标签 + `IfNotPresent`，**导入新镜像后必须显式重建 Pod**，否则仍运行旧镜像。
 
-1. 工作站：从要发布的提交（建议 main）用 `git worktree` 干净检出并 `package-source` 到**新文件名**，记录 SHA-256。打包后用 `tar -tzf <包> | grep '^sql/migrations/'` 核对迁移是否齐全。旧版 `package-source` 只打包 `20261007_*` 日期的迁移，已由 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）修复为打包所有 `<8位日期>_<2位序号>_<小写名>.sql`；请从包含该修复的提交打包。
+1. 工作站：从要发布的提交（建议 main）用 `git worktree` 干净检出并 `package-source` 到**新文件名**，记录 SHA-256。旧版 `package-source` 只打包 `20261007_*` 日期的迁移，已由 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）修复为打包所有 `<8位日期>_<2位序号>_<小写名>.sql`。打包后必须通过以下两项检查，**任一项失败就停止发布，不上传、不执行 `apply-private`**：
+
+   ```bash
+   C=<发布提交>; PKG=<新包>.tar.gz
+   git merge-base --is-ancestor 18c33e7 "$C" || echo "失败：发布提交不含迁移白名单修复"
+   diff <(git ls-tree --name-only "$C" sql/migrations/ | sort) <(tar -tzf "$PKG" | grep '^sql/migrations/.' | sort) \
+     && echo "迁移齐全" || echo "失败：包内迁移与提交不一致"
+   ```
+
+   通过判据：第一条没有输出"失败"；第二条输出"迁移齐全"，也就是提交里 `sql/migrations/` 下的每个文件都在包内（目前应包含 `20261011_01_agent_diagnostics.sql`）。
 2. `gcloud compute scp` 上传，VM 上校验 SHA-256。**不要直接解压覆盖 `/opt/resource-profile`**：覆盖解压会留下新提交已删除的文件，而后端 Dockerfile 用 `COPY . .`，残留的旧源码会进入镜像或导致重复类编译失败。应解压到空目录，校验通过后再同步并删除多余文件，同时排除私有文件。`rsync --delete` 会删除现有源码，所以任何一步失败都必须中止，不能继续同步。为此把步骤写成脚本，用 `bash` 执行，而不是在交互 shell 里逐行粘贴（在交互 shell 里 `set -e` 会直接关掉会话）：
 
    ```bash
@@ -196,14 +205,22 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    set -euo pipefail
    ROOT=/opt/resource-profile
    RELS=/opt/resource-profile-releases
+   install -d -m 0700 "$RELS"
+   exec 9>"$RELS/.stage.lock"
+   flock -n 9 || { echo "另一次暂存正在进行，中止" >&2; exit 1; }   # 两次暂存不能并行
    if [ "${1:-}" = "--resume" ]; then
      REL=$(realpath -e "${2:?用法：--resume <release目录>}")
      case "$REL" in "$RELS"/?*) ;; *) echo "$REL 不在 $RELS 下，中止" >&2; exit 1 ;; esac
+     # 只允许补跑最新一次暂存；目录名以 UTC 时间戳开头，按名称排序即按时间排序
+     LATEST=$(find "$RELS" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)
+     [ "$REL" = "$LATEST" ] || { echo "$REL 已被更新的 $LATEST 取代，拒绝补跑" >&2; exit 1; }
+     if [ -f "$RELS/CURRENT" ] && [[ "$(cat "$RELS/CURRENT")" > "$REL" ]]; then
+       echo "CURRENT 记录的已完成发布比 $REL 新，拒绝补跑" >&2; exit 1
+     fi
    else
      PKG=${1:?缺少包路径} SHA=${2:?缺少期望 SHA-256} NAME=${3:?缺少 release 名}
      ACTUAL=$(sha256sum "$PKG" | cut -d' ' -f1)
      [ "$ACTUAL" = "$SHA" ] || { echo "SHA-256 不匹配，中止，未同步" >&2; exit 1; }
-     install -d -m 0700 "$RELS"
      REL=$RELS/$(date -u +%Y%m%dT%H%M%SZ)-$NAME
      mkdir -m 0700 "$REL"            # 已存在即失败：必须是本次新建的空目录
      echo "release 目录：$REL"
@@ -219,6 +236,7 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    chmod 0755 "$ROOT/sql/init"
    chmod 0644 "$ROOT"/sql/init/*.sql
    restorecon -R "$ROOT/sql/init"
+   echo "$REL" > "$RELS/CURRENT.tmp" && mv "$RELS/CURRENT.tmp" "$RELS/CURRENT"   # 只在暂存全部完成后记录
    echo "staged $REL -> $ROOT"
    EOF
    bash /root/stage-release.sh /opt/resource-profile/<新包>.tar.gz <SHA-256> <release>
@@ -226,7 +244,13 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 
    失败时的目标目录状态取决于失败发生在哪一步。只有看到最后一行 `staged …` 才算完成，否则不要构建镜像：
    - **同步前失败**（SHA 不匹配、release 目录已存在、解压失败、缺关键文件）：`/opt/resource-profile` 没有被改动。修正后用新的 release 名重跑脚本即可。
-   - **`rsync` 本身中断**：目标目录可能只同步了一部分。修复原因后，用脚本输出的 `release 目录：…` 路径补跑：`bash /root/stage-release.sh --resume <release目录>`。`$REL` 只存在于脚本内部，不要在交互 shell 里手工重跑 `rsync`。`--resume` 会先确认目录位于 `/opt/resource-profile-releases` 下并且关键文件齐全，再从 `rsync` 开始执行。
+   - **`rsync` 本身中断**：目标目录可能只同步了一部分。修复原因后，用脚本输出的 `release 目录：…` 路径补跑：`bash /root/stage-release.sh --resume <release目录>`。`$REL` 只存在于脚本内部，不要在交互 shell 里手工重跑 `rsync`。`--resume` 会先确认以下几点，再从 `rsync` 开始执行：
+     - 目录位于 `/opt/resource-profile-releases` 下；
+     - 它是最新一次暂存，没有被之后新建的 release 取代；
+     - 它不早于 `CURRENT` 记录的已完成发布；
+     - 关键文件齐全。
+
+     脚本全程持有 `flock` 锁，两次暂存不会并行；`CURRENT` 只在暂存全部成功后才写入。
    - **同步后失败**（`chmod` 或 `restorecon` 失败）：源码已经更新为新版本，但 `sql/init` 的权限或 SELinux 标签可能不对。修复原因后同样用 `--resume` 补跑，再用 `ls -Zd /opt/resource-profile/sql/init /opt/resource-profile/sql/init/*.sql` 确认标签为 `container_file_t:s0`。`k3s-deploy.py` 的 `apply-private` / `publish` 遇到标签错误也会拒绝继续。
 
 3. 只构建受影响服务（服务名同 `docker/docker-compose.cloud.yml`）：
@@ -261,13 +285,15 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
       - 业务服务 JDBC（`MYSQL_USER` / `MYSQL_PASSWORD`）→ `edu@%`。
 
       轮换前先重新核对，以实际结果为准：`SELECT user,host,plugin FROM mysql.user WHERE user IN ('root','edu');`，并分别通过 TCP 和 socket 连接执行 `SELECT CURRENT_USER();`。
-   3. 在 MySQL Pod 内用当前 root 凭据对上一步列出的**每个** `user@host` 执行 `ALTER USER '<user>'@'<host>' IDENTIFIED BY …`（`MYSQL_ROOT_PASSWORD` 对应两个 root 账号，`MYSQL_PASSWORD` 对应 `edu@%`）；新密码经 stdin 传入，不放在命令行或日志里；
-   4. 再把新值写入 VM 的 `docker/.env.kamatera`，然后执行 `apply-private` → `publish`；
-   5. 失败恢复（不要删除 PVC 或重新初始化来"修复"密码）：
+   3. 执行 `python3 scripts/k3s-deploy.py stop-public` 下线 frontend（PVC 保留），阻止公网请求在窗口期内触发新的数据库连接。业务 Pod 仍在运行，它们新建的 `edu@%` 连接在 `ALTER USER` 之后、`apply-private` 完成之前会认证失败，所以第 4、5 步要连续尽快完成；
+   4. 在 MySQL Pod 内用当前 root 凭据对上一步列出的**每个** `user@host` 执行 `ALTER USER '<user>'@'<host>' IDENTIFIED BY …`（`MYSQL_ROOT_PASSWORD` 对应两个 root 账号，`MYSQL_PASSWORD` 对应 `edu@%`）；新密码经 stdin 传入，不放在命令行或日志里；
+   5. 把新值写入 VM 的 `docker/.env.kamatera`，执行 `apply-private`，等全部 Deployment Ready；
+   6. 执行 `publish` 恢复 frontend，然后在公网登录验证。frontend 只有在 `publish` 之后才存在，所以登录验证放在发布之后。验证失败时，立即执行 `stop-public` 下线公网入口，再按下面的情况排查；
+   7. 失败恢复（不要删除 PVC 或重新初始化来"修复"密码）：
       - MySQL 未就绪：健康检查用的 root 密码与库内 `root@%` 不一致。把 env 中 `MYSQL_ROOT_PASSWORD` 改回库内实际生效的值，重新 `apply-private`。
       - MySQL 已就绪，但业务服务 rollout 卡住或日志报 `Access denied for user 'edu'`：`MYSQL_PASSWORD` 与库内 `edu@%` 不一致。用 root 把 `edu@%` 改成 env 中的值，或把 env 改回库内的值，然后重新 `apply-private`。
       - 部署脚本的迁移或种子步骤认证失败：`root@localhost` 未同步，按同样方法对齐。
-      - 业务服务全部就绪、登录验证通过后，再 `publish`。
+      - 排查期间 frontend 保持下线；修复后重新 `apply-private`，全部 Ready 后再 `publish` 并验证登录。
 
 回滚：发布前先给旧镜像打备份 tag（如 `docker tag edu-portrait-kamatera-agent-service:latest edu-portrait-kamatera-agent-service:pre-<release>` 后一并导入）。失败时把 `latest` 指回旧镜像，重新导入并 `rollout restart`。不删除 PVC。
 
