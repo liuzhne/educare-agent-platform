@@ -41,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -208,8 +209,10 @@ public class ExportServiceImpl implements ExportService {
         return templateEngine.process("report", ctx);
     }
 
-    private File renderPdf(String html, Long jobId, Long taskId) throws IOException {
+    File renderPdf(String html, Long jobId, Long taskId) throws IOException {
         File output = new File(storagePath, String.format("report-%d-%d.pdf", taskId, jobId));
+        // openhtmltopdf 按 XML 解析；模型文本里混入的控制字符会让整份报告 SAXParseException。
+        html = stripInvalidXmlChars(html);
         try (FileOutputStream fos = new FileOutputStream(output)) {
             PdfRendererBuilder builder = new PdfRendererBuilder();
             builder.useFastMode();
@@ -225,6 +228,14 @@ public class ExportServiceImpl implements ExportService {
             builder.run();
         }
         return output;
+    }
+
+    /** XML 1.0 合法字符之外的码点（含孤立代理项）；Thymeleaf 转义只处理标记字符，不会处理它们。 */
+    private static final Pattern XML_INVALID_CHARS =
+            Pattern.compile("[^\\x09\\x0A\\x0D\\x20-\\x{D7FF}\\x{E000}-\\x{FFFD}\\x{10000}-\\x{10FFFF}]");
+
+    static String stripInvalidXmlChars(String html) {
+        return html == null ? null : XML_INVALID_CHARS.matcher(html).replaceAll("");
     }
 
     // ==================== JSON 解析辅助 ====================
