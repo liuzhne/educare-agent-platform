@@ -7,6 +7,17 @@
 
 Kamatera 欠费停用后，生产迁到 GCP 项目 `educare-prod-2026`：新加坡单台 `e2-highmem-4` VM `educare-sg`，K3s 单节点，站点 `https://educare.34-87-79-229.nip.io`，SSH 只走 IAP。部署代码为 main `3725dd6`，内部密钥和种子密码全部重新生成，数据库从空库初始化。17 个工作负载 Ready；受信 HTTPS、三角色鉴权、退出撤销和公网端口边界已验证；RAG 灌库、真实 AgentLoop、PDF、SSE、HPA 尚未验收。资源、费用、访问、更新发布、回滚与销毁步骤见 [GCP 部署手册](./docs/deployment/GCP_DEPLOYMENT.md)。下文涉及 Kamatera VM、`45.130.165.168` 的条目均为历史记录。
 
+已知缺陷（待修复）：`package-source` 只打包 `sql/migrations/20261007_*.sql`（[`scripts/cloud_deploy.py`](./scripts/cloud_deploy.py)），之后的迁移会被静默排除。
+- 复现：打包后执行 `tar -tzf <包> | grep '^sql/migrations/'`，结果里没有 `20261011_01_agent_diagnostics.sql`。
+- 当前线上：全新库已由 `sql/init/10_agent_diagnostics.sql` 建好同等结构，`agent_task` 的四个诊断列经核对存在。
+- 修复前：在已有数据库上发布任何新迁移，都要先改白名单，并人工核对包内迁移列表。
+- 修复后待验证：包内包含全部迁移；`apply-private` 输出 `Applied: <新迁移>`。
+
+运维注意（详见手册 §5）：
+- 更新源码时解压到新建的空 release 目录，再用 `rsync --delete` 同步；不要覆盖解压。
+- 有新迁移时，先执行迁移，再重建服务。
+- 轮换 MySQL 密码时，先在库内对 `root@%`、`root@localhost`、`edu@%` 执行 `ALTER USER`，再改 env；只改 env 会导致 MySQL 或业务服务卡在未就绪状态。
+
 ## FIELD-CONTRACT-AUDIT-20261007：页面、接口与数据库契约审计（2026-10-07）
 
 状态：以下为修复前审计基线；实现与当前验证状态见FIELD-CONTRACT-FIX-20261007条目。见[完整报告](./docs/audits/FIELD_CONTRACT_AUDIT_2026_10_07.md)、结构化清单（本地测试产物，不入库：`./docs/audits/FIELD_CONTRACT_AUDIT_2026_10_07.json`）、CSV（本地测试产物，不入库：`./docs/audits/FIELD_CONTRACT_AUDIT_2026_10_07.csv`）。22路由视图、7API模块、生产20表220列已覆盖；61项按问题组去重，包括42项契约问题、18项已声明未开放/来源缺口和1项权限UI适配。现有实体映射无缺列；不能将所有61项称为数据库缺列或已发生生产故障。

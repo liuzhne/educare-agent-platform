@@ -189,8 +189,10 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 
    ```bash
    dnf install -y rsync   # 首次需要
-   REL=/opt/resource-profile-releases/<release>
-   install -d -m 0700 "$REL" && tar -xzf /opt/resource-profile/<新包>.tar.gz -C "$REL"
+   install -d -m 0700 /opt/resource-profile-releases
+   REL=/opt/resource-profile-releases/$(date -u +%Y%m%dT%H%M%SZ)-<release>
+   mkdir -m 0700 "$REL" || { echo "release 目录已存在，停止"; exit 1; }   # 必须是本次新建的空目录
+   tar -xzf /opt/resource-profile/<新包>.tar.gz -C "$REL"
    rsync -a --delete \
      --exclude=/docker/.env.kamatera --exclude=/.local-run/ --exclude=/.git/ --exclude='/*.tar.gz' \
      "$REL"/ /opt/resource-profile/
@@ -224,9 +226,19 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 6. 改了 env（模型参数、供应商 key、JWT / 内部 token 等）：更新 VM 上的 `docker/.env.kamatera` 后执行 `apply-private`（也会应用迁移）。模板哈希变化会触发相关 Pod 重建；该命令会先下线 frontend，完成后需再 `publish`。
 7. **不能只改 env 来轮换 `MYSQL_ROOT_PASSWORD` / `MYSQL_PASSWORD`**：这两个值只在 MySQL PVC 首次初始化时写入数据库。只改 env 时，MySQL 健康检查会用新的 root 密码登录而数据库仍是旧密码，`apply-private` 卡在 MySQL 未就绪；只改 `MYSQL_PASSWORD` 则业务服务连库认证失败、卡在业务服务 rollout。两种情况下 frontend 都已被下线。正确顺序：
    1. 先备份数据库；
-   2. 在 MySQL Pod 内用当前 root 凭据对 `root` 与 `edu` 账号执行 `ALTER USER … IDENTIFIED BY …`，新密码经 stdin 传入，不放在命令行或日志里；
-   3. 再把新值写入 VM 的 `docker/.env.kamatera`，然后执行 `apply-private` → `publish`；
-   4. 失败恢复：若 MySQL 无法就绪，把 env 中这两项改回数据库当前实际生效的值，重新执行 `apply-private`；确认业务服务可连接后再 `publish`。不要删除 PVC 或重新初始化来"修复"密码。
+   2. 确认要轮换的完整账号（MySQL 以 `user@host` 区分账号）。2026-11-20 线上只读核对结果：`root@%`、`root@localhost`、`edu@%`，`skip_name_resolve=1`。各连接实际匹配的账号：
+      - 健康检查 `mysql -h 127.0.0.1 -u root`（TCP）→ `root@%`；
+      - 部署脚本 `k3s-deploy.py` / `apply-sql-migrations.py` 中不带 `-h` 的 `mysql -uroot`（socket）→ `root@localhost`；
+      - 业务服务 JDBC（`MYSQL_USER` / `MYSQL_PASSWORD`）→ `edu@%`。
+
+      轮换前先重新核对，以实际结果为准：`SELECT user,host,plugin FROM mysql.user WHERE user IN ('root','edu');`，并分别通过 TCP 和 socket 连接执行 `SELECT CURRENT_USER();`。
+   3. 在 MySQL Pod 内用当前 root 凭据对上一步列出的**每个** `user@host` 执行 `ALTER USER '<user>'@'<host>' IDENTIFIED BY …`（`MYSQL_ROOT_PASSWORD` 对应两个 root 账号，`MYSQL_PASSWORD` 对应 `edu@%`）；新密码经 stdin 传入，不放在命令行或日志里；
+   4. 再把新值写入 VM 的 `docker/.env.kamatera`，然后执行 `apply-private` → `publish`；
+   5. 失败恢复（不要删除 PVC 或重新初始化来"修复"密码）：
+      - MySQL 未就绪：健康检查用的 root 密码与库内 `root@%` 不一致。把 env 中 `MYSQL_ROOT_PASSWORD` 改回库内实际生效的值，重新 `apply-private`。
+      - MySQL 已就绪，但业务服务 rollout 卡住或日志报 `Access denied for user 'edu'`：`MYSQL_PASSWORD` 与库内 `edu@%` 不一致。用 root 把 `edu@%` 改成 env 中的值，或把 env 改回库内的值，然后重新 `apply-private`。
+      - 部署脚本的迁移或种子步骤认证失败：`root@localhost` 未同步，按同样方法对齐。
+      - 业务服务全部就绪、登录验证通过后，再 `publish`。
 
 回滚：发布前先给旧镜像打备份 tag（如 `docker tag edu-portrait-kamatera-agent-service:latest edu-portrait-kamatera-agent-service:pre-<release>` 后一并导入）。失败时把 `latest` 指回旧镜像，重新导入并 `rollout restart`。不删除 PVC。
 

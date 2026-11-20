@@ -1,6 +1,6 @@
 # Resource-Profile 架构与工程决策
 
-> 最近更新：2026-10-11
+> 最近更新：2026-11-20
 > 记录范围：当前仍有效的项目级决策。历史阶段细节见 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) §6。
 
 每条记录包含背景、选择、放弃方案和后果。被替换的决策不得直接删除，应改为“已取代”并链接新决策。
@@ -926,3 +926,23 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
   - 逐条改写历史记录里指向已删文件的链接：历史条目保持原样，统一由本条说明去标签 `v0.9.0` 查。
 - 代价与约束：旧的 12 条合成种子知识随 `seed_knowledge.py` 一起离开工作区；生产镜像是否已切到 Java 未核实，不能据此声明线上 Python 已退役。
 - 补充（注释与文档清理）：现行文档和代码注释直接改成 Java 现状；设计稿、部署记录、执行计划等历史文档只在标题下加一条统一说明而不逐条改写，避免改动当时的决策依据。`McpClientConfig` 的强制 HTTP/1.1 保留不动，注释注明该限制源自旧 Python 服务端且迁移后未重新验证。
+
+## GCP-DEPLOY-20261120：生产从 Kamatera 迁到 GCP 单节点 K3s（2026-11-20）
+
+- 背景：Kamatera 试用 VM `resource-profile-sg` 欠费停用，线上不可用，VM 上的数据和私有配置已不受控。需要在用户的 GCP 账号下尽快恢复服务。
+- 选择：
+  - 新建专用项目 `educare-prod-2026`，不复用已有的 `cs-project-kvujvpln`（nonprod）。专用项目可以整体删除来停止全部计费，能单独设预算，权限也和其他项目隔离。结算账号最多关联 3 个项目，为此解绑了空项目 My First Project。
+  - 单台 GCE VM（`e2-highmem-4`，4 vCPU / 32 GB，100 GB pd-balanced，新加坡，约 US$178/月）+ 单节点 K3s，原样复用已在 Kamatera 验证过的 `k3s-deploy.py` 门禁、清单和 Rocky/SELinux 前提。32 GB 给全栈 limits 17.75 GiB 加 K3s 和镜像构建峰值留出余量。
+  - 9 个内部密钥和三个种子账号密码全部重新生成，数据库从空库初始化；Groq / Cloudflare / Langfuse 参数沿用。部署代码为 main `3725dd6`，不含工作区未提交改动。
+  - SSH 只走 IAP，删除默认的全网 22/3389 规则；公网只开放 80/443。
+- 放弃方案：
+  - 单 VM + Docker Compose：步骤更少，但没有 HPA 和 K3s 发布门，也偏离已验证的路径。
+  - Cloud Run + Cloud SQL / Memorystore / 托管向量库：要拆掉自建的 MySQL、Redis、Milvus，改服务间寻址和鉴权，按托管计费也明显更贵，不适合紧急恢复。
+  - 4 vCPU / 16 GB 或 24 GB 自定义机型（约 US$100–150/月）：前者要下调各服务内存 limits，有 OOM 风险；后者余量偏紧。
+  - 复用 Kamatera 的内部密钥：那台 VM 已不受控，复用等于继续信任旧凭据。
+- 代价与约束：
+  - 费用约为 Kamatera 的两倍，且 E2 没有持续使用折扣。停止 VM 后磁盘和静态 IP 仍计费。
+  - 单节点，没有跨主机高可用；nip.io 只适合演示。
+  - 供应商 key 沿用 Kamatera 时期的值，需要轮换；预算提醒未设置。
+  - RAG 灌库、真实 AgentLoop、PDF、SSE、HPA 扩缩容和备份恢复在 GCP 上均待验证。
+  - 本次识别出 `package-source` 迁移白名单只包含 `20261007_*`（见 ARCHITECTURE 同名条目）。修复方案是把白名单放宽为通用的 `<日期>_<序号>_<名称>.sql` 模式，保留现有的私有文件排除规则，并补回归测试，另开 PR 实施；在那之前，每次打包后都要人工核对包内的迁移列表。
