@@ -39,13 +39,18 @@ dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)
       - A 同步后失败、B 正常完成后，对 A 补跑被拒绝，对 B 补跑成功；
       - `CURRENT` 记录的发布比要补跑的目录新时，拒绝补跑；
       - `CURRENT` 只在暂存成功后写入。
-  - 发布前迁移检查（本地实测）：`3725dd6` 与当时的包两项都报失败，缺少 `20261011_01_agent_diagnostics.sql`；`origin/main`（`18c33e7`）新打的包输出"迁移齐全"。
+  - 发布前迁移检查（本地实测 `check-release.sh`）：
+    - 截断的包：exit=1，报"无法完整读取包"；
+    - `3725dd6`：exit=1，报"不含迁移白名单修复"；
+    - 缺少 `20261011` 的旧包配 main：exit=1，报"迁移不一致"；
+    - main（`18c33e7`）新打的包：exit=0，输出"迁移齐全"。
   - `rsync` 本身中断的情形没有模拟。
   - 在 GCP VM 上实跑：待验证。
 - `--resume` 只允许补跑最新一次暂存，并且不能早于 `RELS/CURRENT` 记录的已完成发布；整个暂存过程持有 `flock` 锁。
-- 发布前迁移检查（硬门槛，任一项失败都停止发布，不执行 `apply-private`）：
-  - `git merge-base --is-ancestor 18c33e7 <发布提交>` 成功；
-  - 提交中 `sql/migrations/` 的文件列表与 `tar -tzf <包>` 中的完全一致（命令见手册 §5 第 1 步），目前应包含 `20261011_01_agent_diagnostics.sql`。
+- 发布前迁移检查：用手册 §5 第 1 步的 `check-release.sh`，退出码非 0 就停止发布，不执行 `apply-private`。脚本以 `set -euo pipefail` 执行，以下任一情况都会失败：
+  - 发布提交不含 `18c33e7`；
+  - `tar` 无法完整读取包，例如包被截断（单独检查 `tar` 的退出码，不经管道传给 `diff`）；
+  - 提交中 `sql/migrations/` 的文件列表与包内的不一致，目前应包含 `20261011_01_agent_diagnostics.sql`。
 - 有新迁移时，先执行迁移，再重建服务。
 - 轮换 MySQL 密码的顺序：备份 → 核对账号 → `stop-public` → 库内对 `root@%`、`root@localhost`、`edu@%` 执行 `ALTER USER` → 改 env 并 `apply-private` → `publish` 后验证登录，失败就 `stop-public`。只改 env 会导致 MySQL 或业务服务卡在未就绪状态。
 

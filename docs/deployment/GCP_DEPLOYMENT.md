@@ -187,13 +187,26 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 1. 工作站：从要发布的提交（建议 main）用 `git worktree` 干净检出并 `package-source` 到**新文件名**，记录 SHA-256。旧版 `package-source` 只打包 `20261007_*` 日期的迁移，已由 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）修复为打包所有 `<8位日期>_<2位序号>_<小写名>.sql`。打包后必须通过以下两项检查，**任一项失败就停止发布，不上传、不执行 `apply-private`**：
 
    ```bash
-   C=<发布提交>; PKG=<新包>.tar.gz
-   git merge-base --is-ancestor 18c33e7 "$C" || echo "失败：发布提交不含迁移白名单修复"
-   diff <(git ls-tree --name-only "$C" sql/migrations/ | sort) <(tar -tzf "$PKG" | grep '^sql/migrations/.' | sort) \
-     && echo "迁移齐全" || echo "失败：包内迁移与提交不一致"
+   cat > .local-run/check-release.sh <<'EOF'
+   #!/bin/bash
+   # 用法：bash .local-run/check-release.sh <发布提交> <包路径>；任一项失败时退出码非 0
+   set -euo pipefail
+   C=${1:?缺少发布提交} PKG=${2:?缺少包路径}
+   git merge-base --is-ancestor 18c33e7 "$C" || { echo "失败：发布提交不含迁移白名单修复" >&2; exit 1; }
+   LIST=$(tar -tzf "$PKG") || { echo "失败：无法完整读取包 $PKG（tar 退出码非 0）" >&2; exit 1; }
+   WANT=$(git ls-tree --name-only "$C" sql/migrations/ | sort)
+   GOT=$(printf '%s\n' "$LIST" | grep '^sql/migrations/.' | sort || true)
+   if [ -z "$WANT" ] || [ "$WANT" != "$GOT" ]; then
+     echo "失败：包内迁移与提交不一致" >&2
+     diff <(printf '%s\n' "$WANT") <(printf '%s\n' "$GOT") >&2 || true
+     exit 1
+   fi
+   echo "迁移齐全"
+   EOF
+   bash .local-run/check-release.sh <发布提交> <新包>.tar.gz
    ```
 
-   通过判据：第一条没有输出"失败"；第二条输出"迁移齐全"，也就是提交里 `sql/migrations/` 下的每个文件都在包内（目前应包含 `20261011_01_agent_diagnostics.sql`）。
+   通过判据：退出码为 0，且最后输出"迁移齐全"，即提交里 `sql/migrations/` 下的每个文件都在包内（目前应包含 `20261011_01_agent_diagnostics.sql`）。以下任一情况都会以非零退出码结束：发布提交不含 `18c33e7`；`tar` 无法完整读取包（例如包被截断）；迁移列表不一致。
 2. `gcloud compute scp` 上传，VM 上校验 SHA-256。**不要直接解压覆盖 `/opt/resource-profile`**：覆盖解压会留下新提交已删除的文件，而后端 Dockerfile 用 `COPY . .`，残留的旧源码会进入镜像或导致重复类编译失败。应解压到空目录，校验通过后再同步并删除多余文件，同时排除私有文件。`rsync --delete` 会删除现有源码，所以任何一步失败都必须中止，不能继续同步。为此把步骤写成脚本，用 `bash` 执行，而不是在交互 shell 里逐行粘贴（在交互 shell 里 `set -e` 会直接关掉会话）：
 
    ```bash
