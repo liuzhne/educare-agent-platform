@@ -269,7 +269,7 @@ REQUIRED_RUNTIME_FILES = frozenset((
     "sql/init/06_portrait_contract.sql", "sql/init/07_mental_contract.sql", "sql/init/09_identity_contract.sql", "sql/init/10_agent_diagnostics.sql",
     "sql/init/02_questionnaire_extension.sql", "sql/init/03_agent_init.sql", "sql/init/04_student_extras.sql", "sql/init/05_intervention_feedback.sql",
     "sql/migrations/20261007_01_portrait_contract.sql", "sql/migrations/20261007_02_mental_contract.sql",
-    "sql/migrations/20261007_04_identity_contract.sql",
+    "sql/migrations/20261007_04_identity_contract.sql", "sql/migrations/20261011_01_agent_diagnostics.sql",
     "backend/knowledge-service/pom.xml",
     "backend/common/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports",
     "backend/agent-service/src/main/resources/prompts/risk-analyze.system.md",
@@ -299,7 +299,9 @@ def runtime_file_allowed(name):
         return False
     if re.search(r"(?:^|[-_.])(secret|credentials|backup|dump|local)(?:[-_.]|$)", path.name, re.I):
         return False
-    if re.fullmatch(r"sql/migrations/20261007_[0-9]{2}_[a-z0-9_]+\.sql", name):
+    # Any dated additive migration ships: apply-sql-migrations.py only runs files present on the VM,
+    # so a narrower date pattern silently skips newer migrations on existing databases.
+    if re.fullmatch(r"sql/migrations/[0-9]{8}_[0-9]{2}_[a-z0-9_]+\.sql", name):
         return True
     if len(parts) == 2 and parts[0] == "docker":
         return path.name in {f"Dockerfile.{name}" for name in
