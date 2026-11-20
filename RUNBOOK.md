@@ -27,8 +27,14 @@ dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)
 运维注意（详见手册 §5）：
 - 更新源码时用手册 §5 的 `stage-release.sh`，不要覆盖解压。脚本会显式比对 SHA-256，解压到新建的空 release 目录，检查关键文件，最后 `rsync --delete` 同步，再设置 `sql/init` 的权限和 SELinux 标签。只有输出最后一行 `staged …` 才算完成。
   - 同步前失败：目标目录不变，可以直接重跑。
-  - `rsync` 中断或同步后的 `chmod` / `restorecon` 失败：目标目录已经改变，按手册 §5 的分情况说明补跑剩余步骤，并用 `ls -Z` 核对标签。
-  - 本地已模拟验证：SHA 不对、包损坏时退出码非 0，目标目录不变；包正常时，残留文件被删除，`.local-run` 保留。同步后失败的情形没有模拟。
+  - `rsync` 中断或同步后的 `chmod` / `restorecon` 失败：目标目录已经改变。用脚本输出的 release 目录执行 `bash /root/stage-release.sh --resume <release目录>` 补跑，再用 `ls -Z` 核对标签。不要在交互 shell 里手工重跑 `rsync`，因为 `$REL` 只存在于脚本内部。
+  - 本地已模拟验证（macOS，`/opt` 路径替换为临时目录，`restorecon` 替换为 `true` 或 `false`）：
+    - SHA 不对、包损坏：退出码非 0，目标目录不变；
+    - 包正常：残留文件被删除，`.local-run` 保留；
+    - 同步后 `chmod` 失败、`restorecon` 失败：退出码 1，不输出 `staged`；
+    - `--resume` 补跑成功；
+    - `--resume` 指向 release 根目录之外的路径时拒绝执行。
+  - `rsync` 本身中断的情形没有模拟。
   - 在 GCP VM 上实跑：待验证。
 - 有新迁移时，先执行迁移，再重建服务。
 - 轮换 MySQL 密码时，先在库内对 `root@%`、`root@localhost`、`edu@%` 执行 `ALTER USER`，再改 env；只改 env 会导致 MySQL 或业务服务卡在未就绪状态。

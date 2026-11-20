@@ -192,17 +192,26 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    cat > /root/stage-release.sh <<'EOF'
    #!/bin/bash
    # 用法：bash /root/stage-release.sh <包路径> <期望SHA-256> <release名>
+   #       bash /root/stage-release.sh --resume <release目录>   # rsync 中断或同步后失败时补跑
    set -euo pipefail
-   PKG=$1 SHA=$2 NAME=$3 ROOT=/opt/resource-profile
-   ACTUAL=$(sha256sum "$PKG" | cut -d' ' -f1)
-   [ "$ACTUAL" = "$SHA" ] || { echo "SHA-256 不匹配，中止，未同步" >&2; exit 1; }
-   install -d -m 0700 /opt/resource-profile-releases
-   REL=/opt/resource-profile-releases/$(date -u +%Y%m%dT%H%M%SZ)-$NAME
-   mkdir -m 0700 "$REL"              # 已存在即失败：必须是本次新建的空目录
-   tar -xzf "$PKG" -C "$REL"
+   ROOT=/opt/resource-profile
+   RELS=/opt/resource-profile-releases
+   if [ "${1:-}" = "--resume" ]; then
+     REL=$(realpath -e "${2:?用法：--resume <release目录>}")
+     case "$REL" in "$RELS"/?*) ;; *) echo "$REL 不在 $RELS 下，中止" >&2; exit 1 ;; esac
+   else
+     PKG=${1:?缺少包路径} SHA=${2:?缺少期望 SHA-256} NAME=${3:?缺少 release 名}
+     ACTUAL=$(sha256sum "$PKG" | cut -d' ' -f1)
+     [ "$ACTUAL" = "$SHA" ] || { echo "SHA-256 不匹配，中止，未同步" >&2; exit 1; }
+     install -d -m 0700 "$RELS"
+     REL=$RELS/$(date -u +%Y%m%dT%H%M%SZ)-$NAME
+     mkdir -m 0700 "$REL"            # 已存在即失败：必须是本次新建的空目录
+     echo "release 目录：$REL"
+     tar -xzf "$PKG" -C "$REL"
+   fi
    for f in scripts/k3s-deploy.py scripts/cloud_deploy.py k8s/workloads.json \
             docker/docker-compose.cloud.yml sql/init/01_init.sql backend/pom.xml frontend/package.json; do
-     [ -s "$REL/$f" ] || { echo "包内缺少 $f，中止，未同步" >&2; exit 1; }
+     [ -s "$REL/$f" ] || { echo "$REL 缺少 $f，中止，未同步" >&2; exit 1; }
    done
    rsync -a --delete \
      --exclude=/docker/.env.kamatera --exclude=/.local-run/ --exclude=/.git/ --exclude='/*.tar.gz' \
@@ -216,9 +225,9 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    ```
 
    失败时的目标目录状态取决于失败发生在哪一步。只有看到最后一行 `staged …` 才算完成，否则不要构建镜像：
-   - **同步前失败**（SHA 不匹配、release 目录已存在、解压失败、缺关键文件）：`/opt/resource-profile` 没有被改动，修正后用新的 release 名重跑脚本即可。
-   - **`rsync` 本身中断**：目标目录可能只同步了一部分。修复原因后，对同一个 `$REL` 重跑脚本里那条 `rsync` 命令，再执行后面的 `chmod` / `restorecon`。
-   - **同步后失败**（`chmod` 或 `restorecon` 失败）：源码已经更新为新版本，但 `sql/init` 的权限或 SELinux 标签可能不对。修复原因后重跑这三条命令，再用 `ls -Zd /opt/resource-profile/sql/init /opt/resource-profile/sql/init/*.sql` 确认标签为 `container_file_t:s0`；`k3s-deploy.py` 的 `apply-private` / `publish` 遇到标签错误也会拒绝继续。
+   - **同步前失败**（SHA 不匹配、release 目录已存在、解压失败、缺关键文件）：`/opt/resource-profile` 没有被改动。修正后用新的 release 名重跑脚本即可。
+   - **`rsync` 本身中断**：目标目录可能只同步了一部分。修复原因后，用脚本输出的 `release 目录：…` 路径补跑：`bash /root/stage-release.sh --resume <release目录>`。`$REL` 只存在于脚本内部，不要在交互 shell 里手工重跑 `rsync`。`--resume` 会先确认目录位于 `/opt/resource-profile-releases` 下并且关键文件齐全，再从 `rsync` 开始执行。
+   - **同步后失败**（`chmod` 或 `restorecon` 失败）：源码已经更新为新版本，但 `sql/init` 的权限或 SELinux 标签可能不对。修复原因后同样用 `--resume` 补跑，再用 `ls -Zd /opt/resource-profile/sql/init /opt/resource-profile/sql/init/*.sql` 确认标签为 `container_file_t:s0`。`k3s-deploy.py` 的 `apply-private` / `publish` 遇到标签错误也会拒绝继续。
 
 3. 只构建受影响服务（服务名同 `docker/docker-compose.cloud.yml`）：
 

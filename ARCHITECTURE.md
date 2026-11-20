@@ -647,7 +647,7 @@ agent-service 内部新增抽象层：`AgentTaskServiceImpl → AgentRunner（�
 重建步骤修正（无应用架构影响）：手册 §4.1 不再写死 `34.87.79.229`，改为读取静态地址 `educare-ip` 实际分配到的值，VM、`CLOUD_PUBLIC_IP` 与站点域名都用这个值。只影响重建操作；公网入口仍然只有 frontend 的 80/443，`k3s-deploy.py publish` 的 DNS→`CLOUD_PUBLIC_IP` 门禁不变。
 
 更新发布流程修正（无应用架构影响，见手册 §5）：
-- 源码改为由 `stage-release.sh` 先解压到新建的 release 目录，校验通过后再 `rsync --delete` 同步；同步前失败不改动目标目录，同步后失败时按手册分情况补跑；
+- 源码改为由 `stage-release.sh` 先解压到新建的 release 目录，校验通过后再 `rsync --delete` 同步；同步前失败不改动目标目录，同步后失败用 `--resume` 补跑；
 - 新迁移先于服务重建执行；
 - MySQL 密码按 `user@host` 账号轮换。
 
