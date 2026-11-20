@@ -185,20 +185,36 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 镜像使用 `latest` 标签 + `IfNotPresent`，**导入新镜像后必须显式重建 Pod**，否则仍运行旧镜像。
 
 1. 工作站：从要发布的提交（建议 main）用 `git worktree` 干净检出并 `package-source` 到**新文件名**，记录 SHA-256。打包前确认新增的 SQL 迁移会进入包内：`package-source` 的迁移白名单目前只匹配 `sql/migrations/20261007_*.sql`（见 `scripts/cloud_deploy.py`），其他日期的迁移会被静默排除，需先修改白名单。打包后用 `tar -tzf <包> | grep '^sql/migrations/'` 核对。
-2. `gcloud compute scp` 上传，VM 上校验 SHA-256。**不要直接解压覆盖 `/opt/resource-profile`**：覆盖解压会留下新提交已删除的文件，而后端 Dockerfile 用 `COPY . .`，残留的旧源码会进入镜像或导致重复类编译失败。应解压到空目录，再同步并删除多余文件，同时排除私有文件：
+2. `gcloud compute scp` 上传，VM 上校验 SHA-256。**不要直接解压覆盖 `/opt/resource-profile`**：覆盖解压会留下新提交已删除的文件，而后端 Dockerfile 用 `COPY . .`，残留的旧源码会进入镜像或导致重复类编译失败。应解压到空目录，校验通过后再同步并删除多余文件，同时排除私有文件。`rsync --delete` 会删除现有源码，所以任何一步失败都必须中止，不能继续同步。为此把步骤写成脚本，用 `bash` 执行，而不是在交互 shell 里逐行粘贴（在交互 shell 里 `set -e` 会直接关掉会话）：
 
    ```bash
    dnf install -y rsync   # 首次需要
+   cat > /root/stage-release.sh <<'EOF'
+   #!/bin/bash
+   # 用法：bash /root/stage-release.sh <包路径> <期望SHA-256> <release名>
+   set -euo pipefail
+   PKG=$1 SHA=$2 NAME=$3 ROOT=/opt/resource-profile
+   ACTUAL=$(sha256sum "$PKG" | cut -d' ' -f1)
+   [ "$ACTUAL" = "$SHA" ] || { echo "SHA-256 不匹配，中止，未同步" >&2; exit 1; }
    install -d -m 0700 /opt/resource-profile-releases
-   REL=/opt/resource-profile-releases/$(date -u +%Y%m%dT%H%M%SZ)-<release>
-   mkdir -m 0700 "$REL" || { echo "release 目录已存在，停止"; exit 1; }   # 必须是本次新建的空目录
-   tar -xzf /opt/resource-profile/<新包>.tar.gz -C "$REL"
+   REL=/opt/resource-profile-releases/$(date -u +%Y%m%dT%H%M%SZ)-$NAME
+   mkdir -m 0700 "$REL"              # 已存在即失败：必须是本次新建的空目录
+   tar -xzf "$PKG" -C "$REL"
+   for f in scripts/k3s-deploy.py scripts/cloud_deploy.py k8s/workloads.json \
+            docker/docker-compose.cloud.yml sql/init/01_init.sql backend/pom.xml frontend/package.json; do
+     [ -s "$REL/$f" ] || { echo "包内缺少 $f，中止，未同步" >&2; exit 1; }
+   done
    rsync -a --delete \
      --exclude=/docker/.env.kamatera --exclude=/.local-run/ --exclude=/.git/ --exclude='/*.tar.gz' \
-     "$REL"/ /opt/resource-profile/
-   chmod 0755 /opt/resource-profile/sql/init && chmod 0644 /opt/resource-profile/sql/init/*.sql
-   restorecon -R /opt/resource-profile/sql/init
+     "$REL"/ "$ROOT"/
+   chmod 0755 "$ROOT/sql/init" && chmod 0644 "$ROOT"/sql/init/*.sql
+   restorecon -R "$ROOT/sql/init"
+   echo "staged $REL -> $ROOT"
+   EOF
+   bash /root/stage-release.sh /opt/resource-profile/<新包>.tar.gz <SHA-256> <release>
    ```
+
+   脚本中途失败时，`/opt/resource-profile` 保持原样（只有 `rsync` 本身中断时才可能是部分同步）。如果 `rsync` 中断，修复原因后对同一个 `$REL` 重跑一次 `rsync` 命令即可收敛，不要从部分同步的目录构建镜像。
 
 3. 只构建受影响服务（服务名同 `docker/docker-compose.cloud.yml`）：
 

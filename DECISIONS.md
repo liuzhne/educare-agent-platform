@@ -946,4 +946,18 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
   - 供应商 key 沿用 Kamatera 时期的值，需要轮换；预算提醒未设置。
   - RAG 灌库、真实 AgentLoop、PDF、SSE、HPA 扩缩容和备份恢复在 GCP 上均待验证。
   - 重建时使用新预留的地址，不沿用 `34.87.79.229`：静态外部 IP 只属于预留它的项目和区域，删除后无法指定取回同一个值。在新项目里或重新预留后，再写死旧地址会让 `instances create --address` 失败，或者让 `CLOUD_PUBLIC_IP` / nip.io 域名与 VM 不一致，导致 `publish` 的 DNS 门禁拒绝发布。因此手册改为每次读取 `educare-ip` 的实际值，再统一填到 VM、env 和域名三处。代价是重建后站点域名会变（nip.io 域名由 IP 决定），需要通知使用方；换成自有域名后，只需更新 A 记录。
+  - 更新发布时源码暂存：最初的手册写的是把新包直接解压覆盖到 `/opt/resource-profile`。覆盖解压会留下新提交已删除的文件，而后端 Dockerfile 用 `COPY . .`，残留的旧源码会进入镜像或造成重复类编译失败。现在改为 `stage-release.sh` 脚本，按顺序执行：
+    1. 显式比对 SHA-256；
+    2. 解压到按时间戳新建的空 release 目录，目录已存在就失败；
+    3. 检查关键文件齐全；
+    4. 最后 `rsync --delete` 同步，并排除 env、`.local-run`、`.git` 和源码包。
+
+    脚本用 `set -euo pipefail` 执行，任何一步失败都会在同步前中止，因为 `rsync --delete` 会删除现有源码。SHA 改为显式比较，不依赖 `sha256sum -c`：本地模拟发现 macOS 版本遇到格式不对的校验行时不返回失败。放弃的方案：
+    - 覆盖解压后手工删除旧文件：依赖人工比对，容易漏。
+    - 直接从 release 目录构建和部署：SELinux 的 fcontext 规则和 K3s hostPath 都绑定在 `/opt/resource-profile` 的固定路径上，每次换目录都要重新打标签、改配置。
+    - 在 VM 上 `git pull`：VM 上没有仓库和凭据，而 `package-source` 白名单本身就是防止私有文件进镜像的边界。
+
+    代价：需要先安装 rsync；release 目录会越积越多，要人工清理；`rsync` 本身中途中断时，可能留下部分同步的状态，需要对同一个 release 目录重跑 `rsync`。
+  - 新迁移先于服务重建执行：单服务更新时，`rollout status` 会在迁移执行前就等待新 Pod 就绪，依赖新列的版本会卡在启动阶段。因此规定先执行 `apply-sql-migrations.py`，并且迁移只做加法，保证旧版本 Pod 在迁移后仍能运行。放弃的方案是"先重建、再迁移"，它依赖新代码能容忍缺失的列。
+  - MySQL 密码轮换按账号执行：`MYSQL_ROOT_PASSWORD` 和 `MYSQL_PASSWORD` 只在 PVC 首次初始化时写入。只改 env，健康检查或业务连库就会失败，而 frontend 此时已被下线。因此规定先备份，再在库内对 `root@%`、`root@localhost`、`edu@%` 分别执行 `ALTER USER`，最后改 env 并部署。放弃的方案是"删 PVC 重新初始化"，它会丢失数据。
   - 本次识别出 `package-source` 迁移白名单只包含 `20261007_*`（见 ARCHITECTURE 同名条目）。修复方案是把白名单放宽为通用的 `<日期>_<序号>_<名称>.sql` 模式，保留现有的私有文件排除规则，并补回归测试，另开 PR 实施；在那之前，每次打包后都要人工核对包内的迁移列表。

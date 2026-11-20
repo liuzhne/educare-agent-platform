@@ -25,7 +25,9 @@ dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)
 通过判据：预留地址、VM 外网 IP、`CLOUD_PUBLIC_IP`、站点域名的解析结果四者相同。不一致时，以 `educare-ip` 的实际值为准，修正 env 和域名后重新 `publish`；VM 绑定的不是该地址时，先停机再改绑。
 
 运维注意（详见手册 §5）：
-- 更新源码时解压到新建的空 release 目录，再用 `rsync --delete` 同步；不要覆盖解压。
+- 更新源码时用手册 §5 的 `stage-release.sh`，不要覆盖解压。脚本会显式比对 SHA-256，解压到新建的空 release 目录，检查关键文件，最后 `rsync --delete` 同步；任一步失败都会在同步前中止。
+  - 本地已模拟验证：SHA 不对、包损坏时退出码非 0，目标目录不变；包正常时，残留文件被删除，`.local-run` 保留。
+  - 在 GCP VM 上实跑：待验证。
 - 有新迁移时，先执行迁移，再重建服务。
 - 轮换 MySQL 密码时，先在库内对 `root@%`、`root@localhost`、`edu@%` 执行 `ALTER USER`，再改 env；只改 env 会导致 MySQL 或业务服务卡在未就绪状态。
 
