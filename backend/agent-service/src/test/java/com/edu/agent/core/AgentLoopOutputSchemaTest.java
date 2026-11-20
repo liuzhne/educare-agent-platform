@@ -157,4 +157,72 @@ class AgentLoopOutputSchemaTest {
         assertNotNull(loop.parseLlmJson(envelope.replace("\"resources\":[],", "\"resources\":[],,")).parseError());
         assertNotNull(loop.parseLlmJson(envelope + " {}" ).parseError());
     }
+
+    private static final String MEDIUM_FINAL = """
+        {"risk_analysis":{"risk_level":"medium","risk_score":58,"primary_risk_type":"学业滑坡",
+         "root_cause_analysis":"合成数据两门挂科","key_indicators":["挂科:2"],"recommended_intervention_types":["学业辅导"],"urgency_reason":"补考临近"},
+         "intervention_plan":{"report_title":"合成方案","summary":"合成摘要",
+         "immediate_actions":[{"action":"安排补考辅导","owner":"学业导师","deadline":"2周内"}],
+         "long_term_plan":[{"goal":"恢复学业节奏","milestones":["第4周复核"],"horizon":"1个月"}],
+         "talk_outline":"先共情再帮扶","resources":["学业中心"],"references":["synthetic-policy-001"]}}
+        """;
+
+    @Test void auxiliaryBlankFieldsPassBecauseProviderStrictModeAcceptsThem() {
+        JSONObject answer = JSON.parseObject(MEDIUM_FINAL);
+        JSONObject action = answer.getJSONObject("intervention_plan").getJSONArray("immediate_actions").getJSONObject(0);
+        action.put("owner", ""); action.put("deadline", " ");
+        answer.getJSONObject("intervention_plan").getJSONArray("long_term_plan").getJSONObject(0).put("horizon", "");
+        assertNull(AgentLoopOutputSchema.finalAnswerViolation(answer));
+        assertTrue(AgentLoopOutputSchema.validInterventionPlan(answer.getJSONObject("intervention_plan")));
+    }
+
+    @Test void blankUrgencyIsOnlyAcceptedWhenRiskIsLowOrNone() {
+        JSONObject none = JSON.parseObject(FINAL);
+        none.getJSONObject("risk_analysis").put("urgency_reason", "");
+        assertNull(AgentLoopOutputSchema.finalAnswerViolation(none));
+        assertTrue(AgentLoopOutputSchema.validRisk(none.getJSONObject("risk_analysis")));
+
+        JSONObject medium = JSON.parseObject(MEDIUM_FINAL);
+        medium.getJSONObject("risk_analysis").put("urgency_reason", "");
+        assertEquals("final_answer.risk_analysis.urgency_reason 不能为空字符串",
+                AgentLoopOutputSchema.finalAnswerViolation(medium));
+        assertFalse(AgentLoopOutputSchema.validRisk(medium.getJSONObject("risk_analysis")));
+    }
+
+    @Test void coreBlankAndStructuralErrorsNameTheFirstViolatedPathWithoutValues() {
+        JSONObject answer = JSON.parseObject(MEDIUM_FINAL);
+        answer.getJSONObject("intervention_plan").getJSONArray("immediate_actions").getJSONObject(0).put("action", "");
+        assertEquals("final_answer.intervention_plan.immediate_actions[0].action 不能为空字符串",
+                AgentLoopOutputSchema.finalAnswerViolation(answer));
+
+        answer = JSON.parseObject(MEDIUM_FINAL);
+        answer.getJSONObject("risk_analysis").getJSONArray("key_indicators").add("");
+        assertEquals("final_answer.risk_analysis.key_indicators[1] 不能为空字符串",
+                AgentLoopOutputSchema.finalAnswerViolation(answer));
+
+        answer = JSON.parseObject(MEDIUM_FINAL);
+        answer.getJSONObject("intervention_plan").remove("talk_outline");
+        answer.getJSONObject("intervention_plan").remove("references");
+        assertEquals("final_answer.intervention_plan 缺少字段 [talk_outline, references]",
+                AgentLoopOutputSchema.finalAnswerViolation(answer));
+
+        answer = JSON.parseObject(MEDIUM_FINAL);
+        answer.getJSONObject("risk_analysis").put("risk_level", "HIGH");
+        assertEquals("final_answer.risk_analysis.risk_level 必须是 [\"high\",\"medium\",\"low\",\"none\"] 之一",
+                AgentLoopOutputSchema.finalAnswerViolation(answer));
+
+        answer = JSON.parseObject(MEDIUM_FINAL);
+        answer.getJSONObject("risk_analysis").put("risk_score", 101);
+        assertEquals("final_answer.risk_analysis.risk_score 必须在 0 到 100 之间",
+                AgentLoopOutputSchema.finalAnswerViolation(answer));
+
+        answer = JSON.parseObject(MEDIUM_FINAL);
+        answer.getJSONObject("intervention_plan").put("学生姓名张三", "x");
+        String extra = AgentLoopOutputSchema.finalAnswerViolation(answer);
+        assertEquals("final_answer.intervention_plan 含 schema 之外的字段 [学生姓名张三]", extra);
+        assertFalse(extra.contains("\"x\""));
+
+        assertEquals("final_answer 不是单个合法 JSON 对象", AgentLoopOutputSchema.finalAnswerViolation("not json"));
+        assertNull(AgentLoopOutputSchema.finalAnswerViolation(MEDIUM_FINAL));
+    }
 }

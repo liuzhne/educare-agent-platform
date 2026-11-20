@@ -127,4 +127,20 @@ class AgentLoopE2ECodeTest {
         assertThat(AgentTaskServiceImpl.parseAgentLoopFinalAnswer("not json")).isNull();
         assertThat(AgentTaskServiceImpl.parseAgentLoopFinalAnswer("{\"risk_analysis\":{}}")).isNull();
     }
+
+    @Test
+    void finalAnswerCorrectionNamesTheViolatedPathSoRepairCanConverge() {
+        assertThat(AgentTaskServiceImpl.validateFinalAnswer(FINAL_INNER).valid()).isTrue();
+
+        String blankAction = FINAL_INNER.replace("\"action\":\"安排补考辅导\"", "\"action\":\"\"");
+        var result = AgentTaskServiceImpl.validateFinalAnswer(blankAction);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.correction())
+                .startsWith("final_answer 未通过校验：final_answer.intervention_plan.immediate_actions[0].action 不能为空字符串。")
+                .contains("只修正上述问题");
+
+        String blankOwner = FINAL_INNER.replace("\"owner\":\"学业导师\"", "\"owner\":\"\"");
+        assertThat(AgentTaskServiceImpl.validateFinalAnswer(blankOwner).valid()).isTrue();
+        assertThat(AgentTaskServiceImpl.parseAgentLoopFinalAnswer(blankOwner)).isNotNull();
+    }
 }
