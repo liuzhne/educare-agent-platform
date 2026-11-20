@@ -152,6 +152,26 @@ class CloudDeploymentSecurityTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse(deployment.runtime_file_allowed(name))
 
+    def test_migrations_from_any_date_are_packaged_but_private_sql_is_not(self):
+        manifest = set(deployment.source_manifest())
+        self.assertIn("sql/migrations/20261011_01_agent_diagnostics.sql", manifest)
+        self.assertIn("sql/migrations/20261011_01_agent_diagnostics.sql", deployment.REQUIRED_RUNTIME_FILES)
+        # apply-sql-migrations.py runs every sql/migrations/[0-9]*.sql on the VM; none may be left behind.
+        for path in sorted((deployment.ROOT / "sql/migrations").glob("[0-9]*.sql")):
+            with self.subTest(migration=path.name):
+                self.assertIn(f"sql/migrations/{path.name}", manifest)
+        for name in ("sql/migrations/20270102_01_future_contract.sql", "sql/migrations/20261011_02_agent_diagnostics.sql"):
+            with self.subTest(name=name):
+                self.assertTrue(deployment.runtime_file_allowed(name))
+        for name in ("sql/migrations/20261011_99_student_backup.sql", "sql/migrations/20261011_99_full_dump.sql",
+                     "sql/migrations/20261011_99_local.sql", "sql/migrations/20261011_99_secret_seed.sql",
+                     "sql/migrations/20261011_01_Agent_Diagnostics.sql", "sql/migrations/2026101_01_short_date.sql",
+                     "sql/migrations/20261011_1_one_digit.sql", "sql/migrations/20261011_01_agent.sql.bak",
+                     "sql/migrations/nested/20261011_01_agent_diagnostics.sql", "sql/prod/20261011_01_rotate.sql",
+                     "sql/demo/20261011_01_demo_students.sql", "sql/migrations/.env.20261011"):
+            with self.subTest(name=name):
+                self.assertFalse(deployment.runtime_file_allowed(name))
+
     def test_current_runtime_prompts_skills_autoconfiguration_and_schema_are_packaged(self):
         manifest = set(deployment.source_manifest())
         paths = ["backend/knowledge-service/pom.xml", "docker/Dockerfile.knowledge",
