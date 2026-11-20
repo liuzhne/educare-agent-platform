@@ -7,11 +7,11 @@
 
 Kamatera 欠费停用后，生产迁到 GCP 项目 `educare-prod-2026`：新加坡单台 `e2-highmem-4` VM `educare-sg`，K3s 单节点，站点 `https://educare.34-87-79-229.nip.io`，SSH 只走 IAP。部署代码为 main `3725dd6`，内部密钥和种子密码全部重新生成，数据库从空库初始化。17 个工作负载 Ready；受信 HTTPS、三角色鉴权、退出撤销和公网端口边界已验证；RAG 灌库、真实 AgentLoop、PDF、SSE、HPA 尚未验收。资源、费用、访问、更新发布、回滚与销毁步骤见 [GCP 部署手册](./docs/deployment/GCP_DEPLOYMENT.md)。下文涉及 Kamatera VM、`45.130.165.168` 的条目均为历史记录。
 
-已知缺陷（待修复）：`package-source` 只打包 `sql/migrations/20261007_*.sql`（[`scripts/cloud_deploy.py`](./scripts/cloud_deploy.py)），之后的迁移会被静默排除。
-- 复现：打包后执行 `tar -tzf <包> | grep '^sql/migrations/'`，结果里没有 `20261011_01_agent_diagnostics.sql`。
-- 当前线上：全新库已由 `sql/init/10_agent_diagnostics.sql` 建好同等结构，`agent_task` 的四个诊断列经核对存在。
-- 修复前：在已有数据库上发布任何新迁移，都要先改白名单，并人工核对包内迁移列表。
-- 修复后待验证：包内包含全部迁移；`apply-private` 输出 `Applied: <新迁移>`。
+已知缺陷（已修复）：旧版 `package-source` 只打包 `sql/migrations/20261007_*.sql`（[`scripts/cloud_deploy.py`](./scripts/cloud_deploy.py)），之后的迁移会被静默排除。
+- 复现（旧版）：打包后执行 `tar -tzf <包> | grep '^sql/migrations/'`，结果里没有 `20261011_01_agent_diagnostics.sql`。
+- 修复：[#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）改为打包所有 `<8位日期>_<2位序号>_<小写名>.sql`，并补了回归测试；该 PR 报告两个部署测试脚本通过，`tar -tzf` 确认包内含 `20261011_01_agent_diagnostics.sql`。
+- 当前线上：部署用的是修复前的 `3725dd6`，但全新库已由 `sql/init/10_agent_diagnostics.sql` 建好同等结构，`agent_task` 的四个诊断列经核对存在。
+- 待验证：下次在 GCP 上用包含 `18c33e7` 的提交发布时，`apply-private` 输出 `Applied: 20261011_01_agent_diagnostics.sql`（该迁移是幂等的）。
 
 地址一致性核对（重建或更换 IP 后必做；2026-11-20 实测四项均为 `34.87.79.229`，通过）：
 
@@ -25,8 +25,10 @@ dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)
 通过判据：预留地址、VM 外网 IP、`CLOUD_PUBLIC_IP`、站点域名的解析结果四者相同。不一致时，以 `educare-ip` 的实际值为准，修正 env 和域名后重新 `publish`；VM 绑定的不是该地址时，先停机再改绑。
 
 运维注意（详见手册 §5）：
-- 更新源码时用手册 §5 的 `stage-release.sh`，不要覆盖解压。脚本会显式比对 SHA-256，解压到新建的空 release 目录，检查关键文件，最后 `rsync --delete` 同步；任一步失败都会在同步前中止。
-  - 本地已模拟验证：SHA 不对、包损坏时退出码非 0，目标目录不变；包正常时，残留文件被删除，`.local-run` 保留。
+- 更新源码时用手册 §5 的 `stage-release.sh`，不要覆盖解压。脚本会显式比对 SHA-256，解压到新建的空 release 目录，检查关键文件，最后 `rsync --delete` 同步，再设置 `sql/init` 的权限和 SELinux 标签。只有输出最后一行 `staged …` 才算完成。
+  - 同步前失败：目标目录不变，可以直接重跑。
+  - `rsync` 中断或同步后的 `chmod` / `restorecon` 失败：目标目录已经改变，按手册 §5 的分情况说明补跑剩余步骤，并用 `ls -Z` 核对标签。
+  - 本地已模拟验证：SHA 不对、包损坏时退出码非 0，目标目录不变；包正常时，残留文件被删除，`.local-run` 保留。同步后失败的情形没有模拟。
   - 在 GCP VM 上实跑：待验证。
 - 有新迁移时，先执行迁移，再重建服务。
 - 轮换 MySQL 密码时，先在库内对 `root@%`、`root@localhost`、`edu@%` 执行 `ALTER USER`，再改 env；只改 env 会导致 MySQL 或业务服务卡在未就绪状态。

@@ -952,7 +952,7 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
     3. 检查关键文件齐全；
     4. 最后 `rsync --delete` 同步，并排除 env、`.local-run`、`.git` 和源码包。
 
-    脚本用 `set -euo pipefail` 执行，任何一步失败都会在同步前中止，因为 `rsync --delete` 会删除现有源码。SHA 改为显式比较，不依赖 `sha256sum -c`：本地模拟发现 macOS 版本遇到格式不对的校验行时不返回失败。放弃的方案：
+    脚本用 `set -euo pipefail` 执行，`rsync` 之前的任何一步失败都会中止，目标目录不受影响，因为 `rsync --delete` 会删除现有源码。`rsync` 之后的 `chmod` / `restorecon` 失败时，源码已经更新，只能补跑剩余步骤，不能当作"没有改动"。这些命令都单独成行，不写在 `&&` 列表里：`&&` 列表中非最后一条命令失败时，`set -e` 不会中止脚本。SHA 改为显式比较，不依赖 `sha256sum -c`：本地模拟发现 macOS 版本遇到格式不对的校验行时不返回失败。放弃的方案：
     - 覆盖解压后手工删除旧文件：依赖人工比对，容易漏。
     - 直接从 release 目录构建和部署：SELinux 的 fcontext 规则和 K3s hostPath 都绑定在 `/opt/resource-profile` 的固定路径上，每次换目录都要重新打标签、改配置。
     - 在 VM 上 `git pull`：VM 上没有仓库和凭据，而 `package-source` 白名单本身就是防止私有文件进镜像的边界。
@@ -960,4 +960,4 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
     代价：需要先安装 rsync；release 目录会越积越多，要人工清理；`rsync` 本身中途中断时，可能留下部分同步的状态，需要对同一个 release 目录重跑 `rsync`。
   - 新迁移先于服务重建执行：单服务更新时，`rollout status` 会在迁移执行前就等待新 Pod 就绪，依赖新列的版本会卡在启动阶段。因此规定先执行 `apply-sql-migrations.py`，并且迁移只做加法，保证旧版本 Pod 在迁移后仍能运行。放弃的方案是"先重建、再迁移"，它依赖新代码能容忍缺失的列。
   - MySQL 密码轮换按账号执行：`MYSQL_ROOT_PASSWORD` 和 `MYSQL_PASSWORD` 只在 PVC 首次初始化时写入。只改 env，健康检查或业务连库就会失败，而 frontend 此时已被下线。因此规定先备份，再在库内对 `root@%`、`root@localhost`、`edu@%` 分别执行 `ALTER USER`，最后改 env 并部署。放弃的方案是"删 PVC 重新初始化"，它会丢失数据。
-  - 本次识别出 `package-source` 迁移白名单只包含 `20261007_*`（见 ARCHITECTURE 同名条目）。修复方案是把白名单放宽为通用的 `<日期>_<序号>_<名称>.sql` 模式，保留现有的私有文件排除规则，并补回归测试，另开 PR 实施；在那之前，每次打包后都要人工核对包内的迁移列表。
+  - 本次识别出 `package-source` 迁移白名单只包含 `20261007_*`（见 ARCHITECTURE 同名条目）。修复方案是把白名单放宽为通用的 `<日期>_<序号>_<名称>.sql` 模式，保留现有的私有文件排除规则，并补回归测试。已由 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）实施。打包后核对包内迁移列表这一步保留，作为常规检查。

@@ -184,7 +184,7 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 
 镜像使用 `latest` 标签 + `IfNotPresent`，**导入新镜像后必须显式重建 Pod**，否则仍运行旧镜像。
 
-1. 工作站：从要发布的提交（建议 main）用 `git worktree` 干净检出并 `package-source` 到**新文件名**，记录 SHA-256。打包前确认新增的 SQL 迁移会进入包内：`package-source` 的迁移白名单目前只匹配 `sql/migrations/20261007_*.sql`（见 `scripts/cloud_deploy.py`），其他日期的迁移会被静默排除，需先修改白名单。打包后用 `tar -tzf <包> | grep '^sql/migrations/'` 核对。
+1. 工作站：从要发布的提交（建议 main）用 `git worktree` 干净检出并 `package-source` 到**新文件名**，记录 SHA-256。打包后用 `tar -tzf <包> | grep '^sql/migrations/'` 核对迁移是否齐全。旧版 `package-source` 只打包 `20261007_*` 日期的迁移，已由 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）修复为打包所有 `<8位日期>_<2位序号>_<小写名>.sql`；请从包含该修复的提交打包。
 2. `gcloud compute scp` 上传，VM 上校验 SHA-256。**不要直接解压覆盖 `/opt/resource-profile`**：覆盖解压会留下新提交已删除的文件，而后端 Dockerfile 用 `COPY . .`，残留的旧源码会进入镜像或导致重复类编译失败。应解压到空目录，校验通过后再同步并删除多余文件，同时排除私有文件。`rsync --delete` 会删除现有源码，所以任何一步失败都必须中止，不能继续同步。为此把步骤写成脚本，用 `bash` 执行，而不是在交互 shell 里逐行粘贴（在交互 shell 里 `set -e` 会直接关掉会话）：
 
    ```bash
@@ -207,14 +207,18 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    rsync -a --delete \
      --exclude=/docker/.env.kamatera --exclude=/.local-run/ --exclude=/.git/ --exclude='/*.tar.gz' \
      "$REL"/ "$ROOT"/
-   chmod 0755 "$ROOT/sql/init" && chmod 0644 "$ROOT"/sql/init/*.sql
+   chmod 0755 "$ROOT/sql/init"
+   chmod 0644 "$ROOT"/sql/init/*.sql
    restorecon -R "$ROOT/sql/init"
    echo "staged $REL -> $ROOT"
    EOF
    bash /root/stage-release.sh /opt/resource-profile/<新包>.tar.gz <SHA-256> <release>
    ```
 
-   脚本中途失败时，`/opt/resource-profile` 保持原样（只有 `rsync` 本身中断时才可能是部分同步）。如果 `rsync` 中断，修复原因后对同一个 `$REL` 重跑一次 `rsync` 命令即可收敛，不要从部分同步的目录构建镜像。
+   失败时的目标目录状态取决于失败发生在哪一步。只有看到最后一行 `staged …` 才算完成，否则不要构建镜像：
+   - **同步前失败**（SHA 不匹配、release 目录已存在、解压失败、缺关键文件）：`/opt/resource-profile` 没有被改动，修正后用新的 release 名重跑脚本即可。
+   - **`rsync` 本身中断**：目标目录可能只同步了一部分。修复原因后，对同一个 `$REL` 重跑脚本里那条 `rsync` 命令，再执行后面的 `chmod` / `restorecon`。
+   - **同步后失败**（`chmod` 或 `restorecon` 失败）：源码已经更新为新版本，但 `sql/init` 的权限或 SELinux 标签可能不对。修复原因后重跑这三条命令，再用 `ls -Zd /opt/resource-profile/sql/init /opt/resource-profile/sql/init/*.sql` 确认标签为 `container_file_t:s0`；`k3s-deploy.py` 的 `apply-private` / `publish` 遇到标签错误也会拒绝继续。
 
 3. 只构建受影响服务（服务名同 `docker/docker-compose.cloud.yml`）：
 
