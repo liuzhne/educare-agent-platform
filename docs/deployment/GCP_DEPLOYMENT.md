@@ -9,7 +9,7 @@
 | 项 | 值 |
 |---|---|
 | 项目 | `educare-prod-2026`（名称 EduCare Prod） |
-| 结算账号 | 「我的结算账号」`01B9B5-9F0177-2AE7DD` |
+| 结算账号 | 「我的结算账号」（ID 在 GCP 控制台 Billing 页查看，不写入仓库） |
 | VM | `educare-sg`，`asia-southeast1-b`，`e2-highmem-4`（4 vCPU / 32 GB） |
 | 系统 | Rocky Linux 9.8（`rocky-linux-cloud/rocky-linux-9-optimized-gcp`），x86_64，SELinux Enforcing，Shielded VM（Secure Boot / vTPM / 完整性监控） |
 | 磁盘 | 100 GB `pd-balanced` 启动盘 |
@@ -100,15 +100,17 @@ SELinux 持久标签（与 Kamatera 相同的精确路径规则）：`/opt/resou
 
 ```bash
 gcloud projects create educare-prod-2026 --name="EduCare Prod"
-gcloud billing projects link educare-prod-2026 --billing-account=01B9B5-9F0177-2AE7DD
+gcloud billing projects link educare-prod-2026 --billing-account=<BILLING_ACCOUNT_ID>
 gcloud services enable compute.googleapis.com iap.googleapis.com
 gcloud compute addresses create educare-ip --region=asia-southeast1 --network-tier=PREMIUM
+# 重建时新预留的地址不一定是 34.87.79.229，后续一律使用实际分配的值
+IP=$(gcloud compute addresses describe educare-ip --region=asia-southeast1 --format='value(address)')
 gcloud compute firewall-rules delete default-allow-ssh default-allow-rdp --quiet
 gcloud compute firewall-rules create educare-allow-iap-ssh --network=default --direction=INGRESS --allow=tcp:22 --source-ranges=35.235.240.0/20 --target-tags=educare
 gcloud compute firewall-rules create educare-allow-web --network=default --direction=INGRESS --allow=tcp:80,tcp:443 --source-ranges=0.0.0.0/0 --target-tags=educare
 gcloud compute instances create educare-sg --zone=asia-southeast1-b --machine-type=e2-highmem-4 \
   --image-family=rocky-linux-9-optimized-gcp --image-project=rocky-linux-cloud \
-  --boot-disk-size=100GB --boot-disk-type=pd-balanced --address=34.87.79.229 --network-tier=PREMIUM \
+  --boot-disk-size=100GB --boot-disk-type=pd-balanced --address="$IP" --network-tier=PREMIUM \
   --tags=educare --metadata=enable-guest-attributes=TRUE,enable-oslogin=FALSE \
   --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring
 ```
@@ -142,7 +144,8 @@ firewall-cmd --reload
 
 ```bash
 python3 scripts/kamatera-deploy.py init-env      # 新 env + 新种子密码；已存在时拒绝覆盖
-# 从旧 env 合并非密钥/供应商参数，填 CLOUD_PUBLIC_IP=34.87.79.229、CLOUD_SITE_ADDRESS=educare.34-87-79-229.nip.io
+# 从旧 env 合并非密钥/供应商参数，填 CLOUD_PUBLIC_IP=$IP、CLOUD_SITE_ADDRESS=educare.<IP 的点换成连字符>.nip.io
+# （本次实际为 34.87.79.229 / educare.34-87-79-229.nip.io）
 python3 scripts/kamatera-deploy.py check
 git worktree add --detach <临时目录> main         # 只打包已合入 main 的代码，不带工作区未提交改动
 (cd <临时目录> && python3 scripts/kamatera-deploy.py package-source --output <输出路径>/source-gcp-3725dd6.tar.gz)
@@ -181,8 +184,20 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 
 镜像使用 `latest` 标签 + `IfNotPresent`，**导入新镜像后必须显式重建 Pod**，否则仍运行旧镜像。
 
-1. 工作站：从要发布的提交（建议 main）用 `git worktree` 干净检出并 `package-source` 到**新文件名**，记录 SHA-256。
-2. `gcloud compute scp` 上传，VM 上校验 SHA-256 后解压覆盖 `/opt/resource-profile`。私有 env / seed / 字体不在包内，不会被覆盖；包里已删除的文件不会自动从 VM 上消失。
+1. 工作站：从要发布的提交（建议 main）用 `git worktree` 干净检出并 `package-source` 到**新文件名**，记录 SHA-256。打包前确认新增的 SQL 迁移会进入包内：`package-source` 的迁移白名单目前只匹配 `sql/migrations/20261007_*.sql`（见 `scripts/cloud_deploy.py`），其他日期的迁移会被静默排除，需先修改白名单。打包后用 `tar -tzf <包> | grep '^sql/migrations/'` 核对。
+2. `gcloud compute scp` 上传，VM 上校验 SHA-256。**不要直接解压覆盖 `/opt/resource-profile`**：覆盖解压会留下新提交已删除的文件，而后端 Dockerfile 用 `COPY . .`，残留的旧源码会进入镜像或导致重复类编译失败。应解压到空目录，再同步并删除多余文件，同时排除私有文件：
+
+   ```bash
+   dnf install -y rsync   # 首次需要
+   REL=/opt/resource-profile-releases/<release>
+   install -d -m 0700 "$REL" && tar -xzf /opt/resource-profile/<新包>.tar.gz -C "$REL"
+   rsync -a --delete \
+     --exclude=/docker/.env.kamatera --exclude=/.local-run/ --exclude=/.git/ --exclude='/*.tar.gz' \
+     "$REL"/ /opt/resource-profile/
+   chmod 0755 /opt/resource-profile/sql/init && chmod 0644 /opt/resource-profile/sql/init/*.sql
+   restorecon -R /opt/resource-profile/sql/init
+   ```
+
 3. 只构建受影响服务（服务名同 `docker/docker-compose.cloud.yml`）：
 
    ```bash
@@ -190,8 +205,14 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    docker compose --project-name edu-portrait-kamatera --env-file .env.kamatera -f docker-compose.cloud.yml --profile public build agent-service
    ```
 
-   前端的构建参数来自 env，改 Vite 相关值时用 `python3 scripts/k3s-deploy.py build-frontend`。
-4. 导入并重建：
+   前端的构建参数来自 env，改 Vite 相关值时在仓库根目录执行：`cd /opt/resource-profile && python3 scripts/k3s-deploy.py build-frontend`。
+4. **有新增 SQL 迁移时，先应用迁移再重建服务**，否则依赖新表/列的新版本在 `rollout status` 阶段就会启动失败。迁移须向后兼容（只做加法），保证旧版本 Pod 在迁移后仍可运行：
+
+   ```bash
+   cd /opt/resource-profile && python3 scripts/apply-sql-migrations.py --transport k3s --namespace educare
+   ```
+
+5. 导入并重建：
 
    ```bash
    docker save edu-portrait-kamatera-agent-service:latest | k3s ctr --namespace k8s.io images import -
@@ -200,8 +221,12 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
    ```
 
    `knowledge` 镜像同时被 `ai-inference-service` 和 `knowledge-rag-mcp` 使用，两者都要重建。
-5. 改了 env（密钥、模型参数）：更新 VM 上的 `docker/.env.kamatera` 后执行 `apply-private`。模板哈希变化会触发相关 Pod 重建；该命令会先下线 frontend，完成后需再 `publish`。
-6. 新增 SQL 迁移时，`apply-private` 会通过 `scripts/apply-sql-migrations.py` 自动应用。
+6. 改了 env（模型参数、供应商 key、JWT / 内部 token 等）：更新 VM 上的 `docker/.env.kamatera` 后执行 `apply-private`（也会应用迁移）。模板哈希变化会触发相关 Pod 重建；该命令会先下线 frontend，完成后需再 `publish`。
+7. **不能只改 env 来轮换 `MYSQL_ROOT_PASSWORD` / `MYSQL_PASSWORD`**：这两个值只在 MySQL PVC 首次初始化时写入数据库。只改 env 时，MySQL 健康检查会用新的 root 密码登录而数据库仍是旧密码，`apply-private` 卡在 MySQL 未就绪；只改 `MYSQL_PASSWORD` 则业务服务连库认证失败、卡在业务服务 rollout。两种情况下 frontend 都已被下线。正确顺序：
+   1. 先备份数据库；
+   2. 在 MySQL Pod 内用当前 root 凭据对 `root` 与 `edu` 账号执行 `ALTER USER … IDENTIFIED BY …`，新密码经 stdin 传入，不放在命令行或日志里；
+   3. 再把新值写入 VM 的 `docker/.env.kamatera`，然后执行 `apply-private` → `publish`；
+   4. 失败恢复：若 MySQL 无法就绪，把 env 中这两项改回数据库当前实际生效的值，重新执行 `apply-private`；确认业务服务可连接后再 `publish`。不要删除 PVC 或重新初始化来"修复"密码。
 
 回滚：发布前先给旧镜像打备份 tag（如 `docker tag edu-portrait-kamatera-agent-service:latest edu-portrait-kamatera-agent-service:pre-<release>` 后一并导入）。失败时把 `latest` 指回旧镜像，重新导入并 `rollout restart`。不删除 PVC。
 
