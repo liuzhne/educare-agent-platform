@@ -1,7 +1,11 @@
 # Resource-Profile 运行手册
 
-> 最近更新：2026-10-11
+> 最近更新：2026-11-20
 > 适用范围：当前仓库的开发、测试、排错和发布准备。真实 AI/生产签字状态以 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) R-5/R-6 为准。
+
+## GCP-DEPLOY-20261120：生产迁到 GCP（2026-11-20）
+
+Kamatera 欠费停用后，生产迁到 GCP 项目 `educare-prod-2026`：新加坡单台 `e2-highmem-4` VM `educare-sg`，K3s 单节点，站点 `https://educare.34-87-79-229.nip.io`，SSH 只走 IAP。部署代码为 main `3725dd6`，内部密钥和种子密码全部重新生成，数据库从空库初始化。17 个工作负载 Ready；受信 HTTPS、三角色鉴权、退出撤销和公网端口边界已验证；RAG 灌库、真实 AgentLoop、PDF、SSE、HPA 尚未验收。资源、费用、访问、更新发布、回滚与销毁步骤见 [GCP 部署手册](./docs/deployment/GCP_DEPLOYMENT.md)。下文涉及 Kamatera VM、`45.130.165.168` 的条目均为历史记录。
 
 ## FIELD-CONTRACT-AUDIT-20261007：页面、接口与数据库契约审计（2026-10-07）
 

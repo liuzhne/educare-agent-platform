@@ -1,5 +1,7 @@
 # Kamatera 单节点 K3s 部署
 
+> **2026-11-20 说明**：Kamatera 因欠费停用，生产已迁到 GCP（项目 `educare-prod-2026`），当前运行状态和运维操作见 [GCP 部署手册](./GCP_DEPLOYMENT.md)。本文的 K3s 门禁、私有配置、SELinux 与排错说明仍适用于 GCP；其中的 Kamatera 资源、IP 和验证记录为历史记录。
+
 > **2026-11-10 说明**：旧 Python 服务 `ai-inference-service/` 已从仓库删除（存档于标签 `v0.9.0`），对应能力现由 Java `backend/knowledge-service` 与 `agent-service` 承担。本文中关于 Python / FastAPI / FastMCP 的内容是当时的设计或执行记录，不代表当前运行形态。
 
 > 日期 / 修复标识：2026-10-06 / KAMATERA-DEPLOY-20261006
