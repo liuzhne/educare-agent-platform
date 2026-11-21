@@ -9,7 +9,9 @@ import org.springframework.core.io.ClassPathResource;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonParser;
@@ -80,32 +82,58 @@ public final class AgentLoopOutputSchema {
         } else if (value instanceof JSONArray values) values.forEach(AgentLoopOutputSchema::closeObjects);
     }
 
+    /**
+     * Provider strict mode accepts "" for every string, while these fields render as "—" in UI/PDF;
+     * rejecting them burned repair rounds without making the report any more truthful.
+     */
+    private static final Set<String> BLANK_ALLOWED_FIELDS = Set.of("owner", "deadline", "horizon");
+    /** Urgency must be justified for medium/high risk (psychological-screening red line), not for low/none. */
+    private static final Set<String> BLANK_URGENCY_LEVELS = Set.of("low", "none");
+    private static final int MAX_REPORTED_KEYS = 5;
+
     /** Local schema enforcement also covers compatible providers without constrained decoding. */
     public static JSONObject riskSchema() {
         return JSON.parseObject(FINAL_SCHEMA.getJSONObject("properties").getJSONObject("risk_analysis").toJSONString());
     }
     public static boolean validRisk(JSONObject risk) {
-        if (!matches(riskSchema(), risk)) return false;
-        BigInteger score = new BigInteger(risk.get("risk_score").toString());
-        return score.signum() >= 0 && score.compareTo(BigInteger.valueOf(100)) <= 0;
+        String violation = violation(riskSchema(), risk, "risk_analysis");
+        return violation == null && scoreViolation(risk, "risk_analysis") == null;
     }
     public static JSONObject interventionPlanSchema() {
         return JSON.parseObject(FINAL_SCHEMA.getJSONObject("properties").getJSONObject("intervention_plan").toJSONString());
     }
     public static boolean validInterventionPlan(JSONObject plan) {
-        return matches(interventionPlanSchema(), plan);
+        return violation(interventionPlanSchema(), plan, "intervention_plan") == null;
     }
 
     public static boolean validFinalAnswer(JSONObject answer) {
-        if (!matches(FINAL_SCHEMA, answer)) return false;
-        BigInteger score = new BigInteger(answer.getJSONObject("risk_analysis").get("risk_score").toString());
-        return score.signum() >= 0 && score.compareTo(BigInteger.valueOf(100)) <= 0;
+        return finalAnswerViolation(answer) == null;
+    }
+    /** First violated path in model-chosen field names only; never echoes field values into logs or prompts. */
+    public static String finalAnswerViolation(JSONObject answer) {
+        String violation = violation(FINAL_SCHEMA, answer, "final_answer");
+        return violation != null ? violation
+                : scoreViolation(answer.getJSONObject("risk_analysis"), "final_answer.risk_analysis");
+    }
+    public static String finalAnswerViolation(String text) {
+        JSONObject answer;
+        try {
+            answer = parseStrictObject(text);
+        } catch (Exception e) {
+            return "final_answer 不是单个合法 JSON 对象";
+        }
+        return finalAnswerViolation(answer);
     }
     public static JSONObject parseFinalAnswer(String text) {
         try {
             JSONObject answer = parseStrictObject(text);
             return validFinalAnswer(answer) ? answer : null;
         } catch (Exception ignored) { return null; }
+    }
+    private static String scoreViolation(JSONObject risk, String path) {
+        BigInteger score = new BigInteger(risk.get("risk_score").toString());
+        return score.signum() >= 0 && score.compareTo(BigInteger.valueOf(100)) <= 0
+                ? null : path + ".risk_score 必须在 0 到 100 之间";
     }
     public static JSONObject parseStrictObject(String text) throws IOException {
         var tree = STRICT_JSON.readTree(text);
@@ -131,25 +159,57 @@ public final class AgentLoopOutputSchema {
             array.forEach(item -> removeOptionalNulls(child, item));
         }
     }
-    private static boolean matches(JSONObject schema, Object value) {
-        if (value == null) return false;
-        switch (schema.getString("type")) {
-            case "object":
-                if (!(value instanceof JSONObject object)) return false;
+    /** @return null when valid, otherwise a short Chinese description of the first violated path. */
+    private static String violation(JSONObject schema, Object value, String path) {
+        if (value == null) return path + " 不能为 null";
+        String type = schema.getString("type");
+        switch (type == null ? "" : type) {
+            case "object": {
+                if (!(value instanceof JSONObject object)) return path + " 必须是对象";
                 JSONObject properties = schema.getJSONObject("properties");
-                if (!object.keySet().equals(properties.keySet())) return false;
-                for (String key : properties.keySet()) if (!matches(properties.getJSONObject(key), object.get(key))) return false;
-                return true;
-            case "array":
-                if (!(value instanceof JSONArray array)) return false;
-                return array.stream().allMatch(item -> matches(schema.getJSONObject("items"), item));
-            case "string":
-                if (!(value instanceof String text) || text.isBlank()) return false;
+                Set<String> missing = new LinkedHashSet<>(properties.keySet());
+                missing.removeAll(object.keySet());
+                if (!missing.isEmpty()) return path + " 缺少字段 " + firstKeys(missing);
+                Set<String> extra = new LinkedHashSet<>(object.keySet());
+                extra.removeAll(properties.keySet());
+                if (!extra.isEmpty()) return path + " 含 schema 之外的字段 " + firstKeys(extra);
+                for (String key : properties.keySet()) {
+                    Object child = object.get(key);
+                    if (blankAllowed(key, object, child)) continue;
+                    String violation = violation(properties.getJSONObject(key), child, path + "." + key);
+                    if (violation != null) return violation;
+                }
+                return null;
+            }
+            case "array": {
+                if (!(value instanceof JSONArray array)) return path + " 必须是数组";
+                for (int i = 0; i < array.size(); i++) {
+                    String violation = violation(schema.getJSONObject("items"), array.get(i), path + "[" + i + "]");
+                    if (violation != null) return violation;
+                }
+                return null;
+            }
+            case "string": {
+                if (!(value instanceof String text)) return path + " 必须是字符串";
+                if (text.isBlank()) return path + " 不能为空字符串";
                 JSONArray allowed = schema.getJSONArray("enum");
-                return allowed == null || allowed.contains(text);
+                return allowed == null || allowed.contains(text) ? null : path + " 必须是 " + allowed + " 之一";
+            }
             case "integer":
-                return value instanceof Integer || value instanceof Long || value instanceof BigInteger;
-            default: return false;
+                return value instanceof Integer || value instanceof Long || value instanceof BigInteger
+                        ? null : path + " 必须是整数";
+            default:
+                return path + " 的 schema 类型不受支持";
         }
+    }
+    private static boolean blankAllowed(String key, JSONObject parent, Object value) {
+        if (!(value instanceof String text) || !text.isBlank()) return false;
+        return BLANK_ALLOWED_FIELDS.contains(key)
+                || "urgency_reason".equals(key) && BLANK_URGENCY_LEVELS.contains(parent.getString("risk_level"));
+    }
+    private static String firstKeys(Set<String> keys) {
+        List<String> shown = keys.stream().limit(MAX_REPORTED_KEYS)
+                .map(k -> k.length() > 40 ? k.substring(0, 40) + "…" : k).toList();
+        return shown + (keys.size() > MAX_REPORTED_KEYS ? " 等 " + keys.size() + " 个" : "");
     }
 }

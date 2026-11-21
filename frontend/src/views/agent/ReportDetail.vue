@@ -227,7 +227,9 @@
               <div class="sub-h">立即行动</div>
               <el-table :data="plan.immediate_actions" size="small" stripe>
                 <el-table-column prop="action" label="行动" min-width="280" />
-                <el-table-column prop="owner" label="负责人" width="120" />
+                <el-table-column label="负责人" width="120">
+                  <template #default="{ row }">{{ row.owner || '—' }}</template>
+                </el-table-column>
                 <el-table-column label="期限" width="140" align="center">
                   <template #default="{ row }">{{ row.deadline || '—' }}</template>
                 </el-table-column>

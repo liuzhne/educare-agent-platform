@@ -471,13 +471,19 @@ public class AgentTaskServiceImpl extends ServiceImpl<AgentTaskMapper, AgentTask
                 studentId, studentId);
     }
 
-    /** J-1.3：final_answer 必须能解析为 risk_analysis + intervention_plan 双 JSON，否则给纠错指引。 */
+    /**
+     * J-1.3：final_answer 必须能解析为 risk_analysis + intervention_plan 双 JSON，否则给纠错指引。
+     * 指引点名首个不合格路径：泛泛的"请补齐"会让修复轮重复同一错误，耗尽 8 轮预算。
+     */
     static FinalAnswerValidator.Result validateFinalAnswer(String finalAnswer) {
-        return parseAgentLoopFinalAnswer(finalAnswer) != null
+        String violation = AgentLoopOutputSchema.finalAnswerViolation(finalAnswer);
+        return violation == null
                 ? FinalAnswerValidator.Result.ok()
                 : FinalAnswerValidator.Result.invalid(
-                "final_answer 必须是 system schema 中完整的 risk_analysis 与 intervention_plan 两个对象，"
-                        + "所有字段类型正确；risk_level ∈ {high,medium,low,none}，risk_score 为0至100整数。请补齐缺失字段并只输出ReAct JSON。");
+                "final_answer 未通过校验：" + violation + "。"
+                        + "final_answer 必须是 system schema 中完整的 risk_analysis 与 intervention_plan 两个对象，"
+                        + "所有字段类型正确；risk_level ∈ {high,medium,low,none}，risk_score 为0至100整数。"
+                        + "只修正上述问题并保留其余内容，只输出ReAct JSON。");
     }
 
     private List<ToolCallback> resolveMcpTools() {
