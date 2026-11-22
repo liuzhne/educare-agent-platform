@@ -1,6 +1,6 @@
 # Resource-Profile 架构与工程决策
 
-> 最近更新：2026-11-20
+> 最近更新：2026-11-22
 > 记录范围：当前仍有效的项目级决策。历史阶段细节见 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) §6。
 
 每条记录包含背景、选择、放弃方案和后果。被替换的决策不得直接删除，应改为“已取代”并链接新决策。
@@ -970,3 +970,13 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
 
     `ALTER USER` 之前先执行 `stop-public`：从改密到 `apply-private` 完成这段时间，业务 Pod 新建的连接会认证失败，先下线公网入口，可以避免用户请求在这段时间里报错。登录验证统一放在 `publish` 之后，因为 `apply-private` 会删除 frontend，发布前没有公网入口可以验证；验证失败时立即 `stop-public`。
   - 本次识别出 `package-source` 迁移白名单只包含 `20261007_*`（见 ARCHITECTURE 同名条目）。修复方案是把白名单放宽为通用的 `<日期>_<序号>_<名称>.sql` 模式，保留现有的私有文件排除规则，并补回归测试。已由 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）实施。打包后的检查改为硬门槛，任一项失败就停止发布：发布提交必须包含 `18c33e7`（`git merge-base --is-ancestor`），并且包内 `sql/migrations/` 的文件列表必须与提交中的完全一致。检查写成 `set -euo pipefail` 的 `check-release.sh`，单独判断 `tar` 的退出码，任一项失败都以非零退出码结束。放弃的写法是 `diff <(…) <(tar … | grep …) || echo`：`tar` 的失败状态不会传给 `diff`，截断的包也可能被判为"迁移齐全"，而且 `|| echo` 本身返回 0。
+
+## PACKAGE-LOMBOK-20261122：源码包必须包含 backend/lombok.config（2026-11-22）
+
+- 背景：准备把 main 发布到 GCP 时，用 `package-source` 试打包发现包里没有 `backend/lombok.config`。这个文件是 #37 修复的一部分：没有它，`@Qualifier` 不会被复制到 Lombok 生成的构造器参数上，Spring 会按参数名注入，`AgentTaskServiceImpl` 就会拿到无界的 `agentExecutor`。云端镜像能正常编译和启动，发布检查也发现不了。
+- 选择：把 `backend/lombok.config` 同时加入 `EXACT_RUNTIME_FILES`（允许打包）和 `REQUIRED_RUNTIME_FILES`（缺失即拒绝打包）。`test-cloud-deploy.py` 增加回归测试：根配置必须在包内且属于必需文件；仓库跟踪的所有 `backend/**/lombok.config` 都必须进包，以后新增模块级配置而忘了更新白名单时，测试会失败。
+- 放弃方案：
+  - 发布时手工把文件塞进包里：绕过白名单这道安全边界，而且下次还会漏。
+  - 把 `@Qualifier` 改成显式构造器：要改业务代码，属于 #37 的实现选择，超出打包修复的范围。
+  - 按通配放行所有 `*.config`：会扩大打包范围，可能把不该上传的配置带进去。
+- 代价与约束：以后新增影响编译的根级构建配置（`lombok.config`、`.mvn/` 等）时，要同步更新白名单；回归测试只覆盖 `lombok.config`。

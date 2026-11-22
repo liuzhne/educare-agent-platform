@@ -172,6 +172,19 @@ class CloudDeploymentSecurityTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse(deployment.runtime_file_allowed(name))
 
+    def test_lombok_config_is_packaged_and_required(self):
+        # Without backend/lombok.config the image compiles, but @Qualifier is not copied onto the
+        # @RequiredArgsConstructor parameter and agent-service injects the wrong executor.
+        manifest = set(deployment.source_manifest())
+        self.assertIn("backend/lombok.config", manifest)
+        self.assertIn("backend/lombok.config", deployment.REQUIRED_RUNTIME_FILES)
+        tracked = subprocess.run(["git", "-C", str(deployment.ROOT), "ls-files", "--", "backend/*lombok.config",
+                                  "backend/**/lombok.config"], text=True, capture_output=True, check=True).stdout.split()
+        self.assertIn("backend/lombok.config", tracked)
+        for name in tracked:
+            with self.subTest(config=name):
+                self.assertIn(name, manifest)
+
     def test_current_runtime_prompts_skills_autoconfiguration_and_schema_are_packaged(self):
         manifest = set(deployment.source_manifest())
         paths = ["backend/knowledge-service/pom.xml", "docker/Dockerfile.knowledge",
