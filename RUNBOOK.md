@@ -1,7 +1,17 @@
 # Resource-Profile 运行手册
 
-> 最近更新：2026-11-20
+> 最近更新：2026-11-22
 > 适用范围：当前仓库的开发、测试、排错和发布准备。真实 AI/生产签字状态以 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) R-5/R-6 为准。
+
+## PACKAGE-LOMBOK-20261122：源码包缺少 backend/lombok.config（2026-11-22）
+
+- 复现（修复前）：从 `b6c1705` 执行 `python3 scripts/kamatera-deploy.py package-source --output <包>` 后，`tar -tzf <包> | grep -c lombok.config` 输出 0。
+- 影响：云端构建的 agent-service 忽略 #37 的 `@Qualifier` 修复，`AgentTaskServiceImpl` 注入错误的线程池，并且不会报错。
+- 修复：[`scripts/cloud_deploy.py`](./scripts/cloud_deploy.py) 把它加入打包白名单和必需文件。
+- 验证（本地已通过）：
+  - `python scripts/test-cloud-deploy.py`（19 项）通过，`python scripts/test-k3s-deploy.py`（15 项）通过，均在装有 bcrypt 的 venv 中运行；
+  - 新增的 `test_lombok_config_is_packaged_and_required` 在修复前的 `cloud_deploy.py` 上失败，修复后通过。
+- 待验证：修复合入后重新打包，`tar -tzf` 能列出 `backend/lombok.config`；GCP 上重建的 agent-service 注入的是 `agentTaskExecutor`。
 
 ## GCP-DEPLOY-20261120：生产迁到 GCP（2026-11-20）
 

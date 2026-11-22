@@ -245,7 +245,7 @@ def bootstrap_seeds(values, path, credentials_path=CREDENTIALS):
 BACKEND_MODULES = frozenset(("common", "gateway", "auth-service", "user-service", "teacher-service",
                              "student-service", "mental-service", "data-service", "agent-service", "mcp-student-data", "knowledge-service"))
 EXACT_RUNTIME_FILES = frozenset((
-    "backend/pom.xml", "backend/.dockerignore",
+    "backend/pom.xml", "backend/.dockerignore", "backend/lombok.config",
     "frontend/package.json", "frontend/package-lock.json", "frontend/vite.config.js",
     "frontend/index.html", "frontend/.dockerignore", "frontend/scripts/check-bundle-size.mjs",
     "docker/Dockerfile.knowledge",
@@ -262,7 +262,9 @@ EXACT_RUNTIME_FILES = frozenset((
     "backend/common/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports",
 ))
 REQUIRED_RUNTIME_FILES = frozenset((
-    "backend/pom.xml", "frontend/package-lock.json", "docker/Dockerfile.knowledge",
+    # lombok.config makes @RequiredArgsConstructor copy @Qualifier; without it agent-service silently
+    # injects the wrong executor, so a package missing it must be refused.
+    "backend/pom.xml", "backend/lombok.config", "frontend/package-lock.json", "docker/Dockerfile.knowledge",
     "docker/docker-compose.cloud.yml", "scripts/cloud_deploy.py", "sql/init/01_init.sql",
     "k8s/workloads.json", "scripts/k3s-deploy.py",
     "scripts/apply-sql-migrations.py",
