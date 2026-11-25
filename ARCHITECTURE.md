@@ -1,6 +1,6 @@
 # Resource-Profile 架构说明
 
-> 最近更新：2026-11-22
+> 最近更新：2026-11-25
 > 状态：按当前仓库实现初始化；真实模型与生产全栈仍待 `docs/educare/EXECUTION_PLAN.md` 的 R-5/R-6 验收。
 
 本文说明项目级模块边界、核心调用链与数据流。EduCare 的历史计划与原子任务状态以 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) 为准；本文只描述当前仍在代码中的能力。
@@ -658,3 +658,7 @@ agent-service 内部新增抽象层：`AgentTaskServiceImpl → AgentRunner（�
 无运行时架构影响，影响的是部署工具的打包边界。[#37](https://github.com/liuzhne/educare-agent-platform/pull/37) 新增的 [`backend/lombok.config`](./backend/lombok.config) 让 `@RequiredArgsConstructor` 把字段上的 `@Qualifier` 复制到构造器参数，agent-service 的 `AgentTaskServiceImpl` 才会注入有界的 `agentTaskExecutor`。
 
 [`scripts/cloud_deploy.py`](./scripts/cloud_deploy.py) 的 `package-source` 原本不打包这个文件，K3s/Compose 云端构建出的 agent-service 会退回按参数名注入，并且不会报任何错。现在把它加入 `EXACT_RUNTIME_FILES` 和 `REQUIRED_RUNTIME_FILES`，缺少它的包会被拒绝。本仓库中只有 agent-service 使用 `@Qualifier`。
+
+## 维护记录：GCP-RELEASE-20261122（2026-11-22）
+
+无架构影响。GCP 生产从 `3725dd6` 升级到 `d41f7f6`，只替换了 agent-service 和 frontend 镜像，模块边界、调用链和安全边界不变。#37 的线程池注入已在新镜像的字节码中确认（`AgentTaskServiceImpl` 构造器参数带 `@Qualifier`）。其余 9 个应用镜像仍由 `3725dd6` 构建；它们不使用 `@Qualifier`，不受 `lombok.config` 影响。记录见 [GCP 部署手册 §6.2](./docs/deployment/GCP_DEPLOYMENT.md)。

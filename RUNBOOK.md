@@ -1,7 +1,14 @@
 # Resource-Profile 运行手册
 
-> 最近更新：2026-11-22
+> 最近更新：2026-11-25
 > 适用范围：当前仓库的开发、测试、排错和发布准备。真实 AI/生产签字状态以 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) R-5/R-6 为准。
+
+## GCP-RELEASE-20261122：发布 main d41f7f6 到 GCP（2026-11-22）
+
+线上从 `3725dd6` 升级到 `d41f7f6`，只重建了 agent-service 和 frontend。完整记录见 [GCP 部署手册 §6.2](./docs/deployment/GCP_DEPLOYMENT.md)。
+- 已通过：`check-release.sh` exit=0；发布前 MySQL 备份；`stage-release.sh` 首次在 VM 上走完正常路径（`LATEST` = `CURRENT`）；`20261011` 迁移实际应用；新 agent-service 镜像的构造器参数带 `@Qualifier`；17 个 Deployment Ready；外部冒烟、三角色权限和退出撤销通过。
+- 回滚：两个 Deployment 指回 `pre-d41f7f6` 镜像并 `rollout restart`；数据用 `/root/backups/edu_portrait-pre-d41f7f6-20261122T064656Z.sql` 恢复（恢复未演练）。
+- 仍待验证：真实 AgentLoop 报告与中文 PDF 导出、SSE、HPA、备份恢复演练；`stage-release.sh` 的失败与补跑路径只在本地模拟过。
 
 ## PACKAGE-LOMBOK-20261122：源码包缺少 backend/lombok.config（2026-11-22）
 
@@ -11,7 +18,7 @@
 - 验证（本地已通过）：
   - `python scripts/test-cloud-deploy.py`（19 项）通过，`python scripts/test-k3s-deploy.py`（15 项）通过，均在装有 bcrypt 的 venv 中运行；
   - 新增的 `test_lombok_config_is_packaged_and_required` 在修复前的 `cloud_deploy.py` 上失败，修复后通过。
-- 待验证：修复合入后重新打包，`tar -tzf` 能列出 `backend/lombok.config`；GCP 上重建的 agent-service 注入的是 `agentTaskExecutor`。
+- 线上验证（2026-11-22，已通过）：从合入后的 `d41f7f6` 打包，`tar -tzf` 列出 `backend/lombok.config`；GCP 上重建的 agent-service 镜像中，`AgentTaskServiceImpl` 的构造器参数带 `@Qualifier`，旧镜像没有。这是字节码层面的证据；运行时任务确实走 `agentTaskExecutor`，还需要一次真实 Agent 任务来确认。
 
 ## GCP-DEPLOY-20261120：生产迁到 GCP（2026-11-20）
 
@@ -20,8 +27,7 @@ Kamatera 欠费停用后，生产迁到 GCP 项目 `educare-prod-2026`：新加�
 已知缺陷（已修复）：旧版 `package-source` 只打包 `sql/migrations/20261007_*.sql`（[`scripts/cloud_deploy.py`](./scripts/cloud_deploy.py)），之后的迁移会被静默排除。
 - 复现（旧版）：打包后执行 `tar -tzf <包> | grep '^sql/migrations/'`，结果里没有 `20261011_01_agent_diagnostics.sql`。
 - 修复：[#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（main `18c33e7`）改为打包所有 `<8位日期>_<2位序号>_<小写名>.sql`，并补了回归测试；该 PR 报告两个部署测试脚本通过，`tar -tzf` 确认包内含 `20261011_01_agent_diagnostics.sql`。
-- 当前线上：部署用的是修复前的 `3725dd6`，但全新库已由 `sql/init/10_agent_diagnostics.sql` 建好同等结构，`agent_task` 的四个诊断列经核对存在。
-- 待验证：下次在 GCP 上用包含 `18c33e7` 的提交发布时，`apply-private` 输出 `Applied: 20261011_01_agent_diagnostics.sql`（该迁移是幂等的）。
+- 线上验证（2026-11-22，已通过）：发布 `d41f7f6` 时，按手册 §5 第 4 步执行 `apply-sql-migrations.py`（没有用 `apply-private`），输出 `Applied: 20261011_01_agent_diagnostics.sql`。该迁移是幂等的，库里已有的四个诊断列没有受影响。
 
 地址一致性核对（重建或更换 IP 后必做；2026-11-20 实测四项均为 `34.87.79.229`，通过）：
 
@@ -56,7 +62,7 @@ dig +short "$(grep -E '^CLOUD_SITE_ADDRESS=' docker/.env.kamatera | cut -d= -f2)
     - 缺少 `20261011` 的旧包配 main：exit=1，报"迁移不一致"；
     - main（`18c33e7`）新打的包：exit=0，输出"迁移齐全"。
   - `rsync` 本身中断的情形没有模拟。
-  - 在 GCP VM 上实跑：待验证。
+  - 在 GCP VM 上实跑：2026-11-22 发布 `d41f7f6` 时正常路径通过（输出 `staged`，`LATEST` = `CURRENT`），`check-release.sh` 也对真实发布包通过；失败与补跑路径仍只在本地模拟过。
 - `--resume` 只允许补跑与 `RELS/LATEST` 一致的目录：`LATEST` 在持锁期间、`rsync` 之前原子写入，不依赖时间戳排序。整个暂存过程持有 `flock` 锁；`RELS/CURRENT` 记录最近一次完整完成的发布。
 - 发布前迁移检查：用手册 §5 第 1 步的 `check-release.sh`，退出码非 0 就停止发布，不执行 `apply-private`。脚本以 `set -euo pipefail` 执行，以下任一情况都会失败：
   - 发布提交不含 `18c33e7`；
