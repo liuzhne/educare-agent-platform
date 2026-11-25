@@ -1,6 +1,6 @@
 # Resource-Profile 架构与工程决策
 
-> 最近更新：2026-11-22
+> 最近更新：2026-11-25
 > 记录范围：当前仍有效的项目级决策。历史阶段细节见 [`docs/educare/EXECUTION_PLAN.md`](./docs/educare/EXECUTION_PLAN.md) §6。
 
 每条记录包含背景、选择、放弃方案和后果。被替换的决策不得直接删除，应改为“已取代”并链接新决策。
@@ -980,3 +980,14 @@ RT-05属追踪关联能力改善：循环开始先生成真实trace/root span，
   - 把 `@Qualifier` 改成显式构造器：要改业务代码，属于 #37 的实现选择，超出打包修复的范围。
   - 按通配放行所有 `*.config`：会扩大打包范围，可能把不该上传的配置带进去。
 - 代价与约束：以后新增影响编译的根级构建配置（`lombok.config`、`.mvn/` 等）时，要同步更新白名单；回归测试只覆盖 `lombok.config`。
+
+## GCP-RELEASE-20261122：发布 d41f7f6 时只重建受影响的镜像（2026-11-22）
+
+- 背景：`3725dd6`→`d41f7f6` 的运行时改动只有 agent-service 代码、`backend/lombok.config` 和前端（`ReportDetail.vue`、`package-lock.json`）。`lombok.config` 会参与所有 Java 模块的编译，但只有 agent-service 使用 `@Qualifier`。
+- 选择：
+  - 只重建 agent-service 和 frontend；
+  - 发布前先做 MySQL 逻辑备份，并给旧镜像打 `pre-d41f7f6` 回滚 tag；
+  - 迁移先于服务重建执行；
+  - 用字节码对比确认 `@Qualifier` 修复确实进入了镜像，而不是只看构建成功。
+- 放弃方案：重建全部 11 个应用镜像。其他 9 个模块编译出的字节码与原来等价，全部重建只会延长维护窗口、扩大风险面。
+- 代价与约束：线上各镜像的源码版本不一致（9 个是 `3725dd6`，2 个是 `d41f7f6`）。以后其他模块引入 `@Qualifier`，或依赖 `lombok.config` 中的其他配置时，必须重建对应镜像。

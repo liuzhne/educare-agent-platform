@@ -1,6 +1,7 @@
 # GCP 单节点 K3s 部署
 
 > 日期 / 标识：2026-11-20 / GCP-DEPLOY-20261120
+> 最近发布：2026-11-22 / GCP-RELEASE-20261122，线上代码为 main `d41f7f6`（见 §6.2）
 > 状态：**当前生产环境**。Kamatera（`resource-profile-sg`）因欠费停用，生产迁到 GCP。17 个工作负载 Ready，受信 HTTPS、三角色鉴权、退出撤销和公网端口边界已验证；RAG 灌库、真实 AgentLoop、PDF 导出、SSE、HPA 扩缩容尚未验收（见 §7）。
 > 部署形态沿用 [Kamatera 手册](./KAMATERA_DEPLOYMENT.md) 与 [K3s README](../../k8s/README.md) 的单节点 K3s 路径和 `scripts/k3s-deploy.py` 门禁；本文只记录 GCP 侧差异、实际资源和运维操作。脚本、私有文件和镜像名里的 `kamatera` 字样保持不变（改名会改变镜像 tag / 默认路径），不代表仍运行在 Kamatera。
 
@@ -309,7 +310,9 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 
 回滚：发布前先给旧镜像打备份 tag（如 `docker tag edu-portrait-kamatera-agent-service:latest edu-portrait-kamatera-agent-service:pre-<release>` 后一并导入）。失败时把 `latest` 指回旧镜像，重新导入并 `rollout restart`。不删除 PVC。
 
-## 6. 验证记录（2026-11-20）
+## 6. 验证记录
+
+### 6.1 首次部署（2026-11-20，main `3725dd6`）
 
 从工作站外部实测：
 
@@ -330,11 +333,35 @@ python3 scripts/k3s-deploy.py probe-models        # 真实 Groq + Cloudflare 各
 | 公网端口 22 / 3306 / 6379 / 6443 / 8080 / 8848 / 10250 / 19530 | 全部不可达 |
 | `probe-models` | Groq 对话、Cloudflare 1024 维向量均通过 |
 
+### 6.2 发布 main `d41f7f6`（2026-11-22，GCP-RELEASE-20261122）
+
+从 `3725dd6` 升级到 `d41f7f6`，包含 [#36](https://github.com/liuzhne/educare-agent-platform/pull/36)（迁移白名单）、[#37](https://github.com/liuzhne/educare-agent-platform/pull/37)（报告导出与 AgentLoop 稳定性）、[#38](https://github.com/liuzhne/educare-agent-platform/pull/38)（打包 `backend/lombok.config`）。按 §5 流程执行，只重建了受影响的 agent-service 和 frontend。
+
+| 步骤 | 结果 |
+|---|---|
+| 打包 | 425 个文件，SHA-256 `b7217f67ca31f72907091d208f26a9d1fc901533b3cdd9fcacefa5742354b0b9`，包含 `backend/lombok.config` |
+| `check-release.sh` | exit=0，"迁移齐全" |
+| 发布前备份 | VM `/root/backups/edu_portrait-pre-d41f7f6-20261122T064656Z.sql`（0600，`mysqldump --single-transaction`） |
+| `stage-release.sh`（首次在 VM 实跑，正常路径） | 安装 rsync 后输出 `staged …`；`LATEST` 与 `CURRENT` 均为 `/opt/resource-profile-releases/20261122T064700Z-d41f7f6` |
+| 回滚 tag | 旧镜像标记为 `edu-portrait-kamatera-{agent-service,frontend}:pre-d41f7f6`，已导入 K3s containerd |
+| 迁移（先于服务重建） | `apply-sql-migrations.py`：3 条 `20261007_*` 已应用过，`20261011_01_agent_diagnostics.sql` 本次实际应用 |
+| 替换镜像 | agent-service、frontend `rollout status` 成功；17 个 Deployment 全部 1/1，两个 Pod 重启次数 0，运行镜像与 `pre-d41f7f6` 不同 |
+| #37 线程池注入 | 从新旧镜像 jar 中取出 `AgentTaskServiceImpl.class` 解析：旧镜像构造器参数无注解，新镜像构造器参数带 1 个 `@Qualifier` |
+| agent-service 启动 | `Started AgentServiceApplication`，日志中 ERROR / Exception 行数 0 |
+| 外部冒烟 | `/healthz`、`/login` 200；匿名业务接口 401；`/api/actuator/health` 403 |
+| 三角色 | admin 五个接口均 200；teacher 用户列表 403、其余 200；student 仅 userInfo 200、其余 403；退出后旧 token 401 |
+
+注意：登录接口的 token 字段是 `data.token`（不是 `accessToken`）。验证脚本取错字段时，会把全部请求误判为未登录。
+
+回滚：把两个 Deployment 的镜像指回 `pre-d41f7f6` tag，然后 `rollout restart`。`20261011` 迁移只做加法，旧版本可以继续运行；如需恢复数据，使用上面的备份。
+
 ## 7. 尚未验收 / 待办
 
 - **知识库为空**：`init-rag` 只建集合，未灌知识，RAG 检索当前无内容。需按 Kamatera 手册 §5 / RUNBOOK 使用授权的非敏感知识源灌库并验收检索。
 - **数据库只有三个种子账号**，无演示师生数据。
-- 真实 AgentLoop 画像报告生成、中文 PDF 导出、SSE 推送、双 MCP 工具调用、data-service HPA 1→2→1、MySQL/Milvus 备份恢复均未在 GCP 上实测。
+- 真实 AgentLoop 画像报告生成、中文 PDF 导出（含 #37 的导出修复）、SSE 推送、双 MCP 工具调用、data-service HPA 1→2→1、MySQL/Milvus 备份恢复均未在 GCP 上实测。2026-11-22 只做了发布前的 MySQL 逻辑备份，没有做恢复演练。
+- 其余 9 个应用镜像仍由 `3725dd6` 的源码构建，里面没有 `backend/lombok.config`。这些模块不使用 `@Qualifier`，所以行为不受影响；以后它们引入 `@Qualifier` 时，必须重建对应镜像。
+- `stage-release.sh` 的失败与补跑路径只在本地模拟过，`rsync` 中断的情形没有模拟。
 - Langfuse 参数已迁入，但未验证 GCP 上的 trace 上报。
 - **供应商 key 轮换**：Groq / Cloudflare / Langfuse key 沿用 Kamatera 时期的值，而 Kamatera VM 已不受控，建议轮换后更新 VM env 并 `apply-private` + `publish`。
 - 预算提醒未设置；Kamatera 服务器 / 账户需由账号所有者在其后台终止。
